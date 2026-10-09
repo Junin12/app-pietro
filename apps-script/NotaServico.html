@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body>
+<?!= include('Cabecalho', d) ?>
+
+<h2>Atendimento</h2>
+<table class="dados">
+  <tr><td width="30%"><b>Orçamento</b></td><td>nº <?= pad4_(d.at.numero) ?> de <?= dataBR(d.at.data_orcamento) ?></td></tr>
+  <tr><td><b>Serviço executado em</b></td><td><?= dataHoraBR(d.at.data_inicio) ?> até <?= dataHoraBR(d.at.data_conclusao) ?></td></tr>
+</table>
+
+<h2>Serviços prestados</h2>
+<table class="dados">
+  <tr><th>Serviço</th><th class="centro">Qtd</th><th class="dir">Valor unit.</th><th class="dir">Total</th></tr>
+  <? d.itens.forEach(function (i) { ?>
+  <tr><td><?= i.nome ?></td><td class="centro"><?= qtdBR(i.qtd) ?> <?= i.unidade ?></td><td class="dir"><?= moeda(i.preco) ?></td><td class="dir"><?= moeda(num(i.qtd) * num(i.preco)) ?></td></tr>
+  <? }); ?>
+  <? if (d.valores.desl) { ?><tr><td colspan="3">Deslocamento</td><td class="dir"><?= moeda(d.valores.desl) ?></td></tr><? } ?>
+  <? if (d.valores.desc) { ?><tr><td colspan="3">Desconto</td><td class="dir">− <?= moeda(d.valores.desc) ?></td></tr><? } ?>
+  <? if (d.valores.ajuste) { ?><tr><td colspan="3">Ajuste para o valor mínimo do atendimento</td><td class="dir"><?= moeda(d.valores.ajuste) ?></td></tr><? } ?>
+</table>
+
+<? var cobrados = d.mats.filter(function (m) { return m.cobrado > 0; }); ?>
+<? if (cobrados.length) { ?>
+<h2>Materiais fornecidos</h2>
+<table class="dados">
+  <tr><th>Material</th><th class="centro">Qtd</th><th class="dir">Total</th></tr>
+  <? cobrados.forEach(function (m) { ?>
+  <tr><td><?= m.descricao ?></td><td class="centro"><?= qtdBR(m.quantidade) ?></td><td class="dir"><?= moeda(m.cobrado) ?></td></tr>
+  <? }); ?>
+</table>
+<? } ?>
+
+<table class="dados" style="margin-top:10px">
+  <tr class="total"><td>TOTAL</td><td class="dir"><?= moeda(d.valores.total) ?></td></tr>
+</table>
+
+<h2>Pagamento</h2>
+<div class="caixa">
+  <? if (d.at.pagamento === 'Pago') { ?>
+    <span class="verde">PAGO</span> em <?= dataBR(d.at.data_pagamento) ?> via <?= d.at.forma_pagamento ?>.<br>
+    Recebi de <b><?= nomeCli(d.cli) ?></b> a importância de <b><?= moeda(d.valores.total) ?></b> referente aos serviços acima.
+  <? } else { ?>
+    <span class="alerta">PAGAMENTO PENDENTE</span> · Valor: <b><?= moeda(d.valores.total) ?></b><? if (d.cfg.chave_pix) { ?> · Chave Pix: <b><?= d.cfg.chave_pix ?></b><? } ?>
+  <? } ?>
+</div>
+
+<h2>Garantia</h2>
+<p>Garantia de <b><?= d.cfg.garantia_dias || 90 ?> dias</b> sobre a mão de obra, conforme o Código de Defesa do Consumidor, a partir de <?= dataBR(d.at.data_conclusao) ?>.</p>
+
+<table width="100%" style="margin-top:28px">
+  <tr>
+    <td width="50%" class="centro">______________________________<br><?= d.cfg.nome_profissional || 'Pietro Fasano' ?><br><span class="pequeno">Prestador do serviço · <?= d.cfg.nome_empresa || 'Pietro Resolve' ?></span></td>
+    <td width="50%" class="centro">______________________________<br><?= nomeCli(d.cli) ?><br><span class="pequeno">Cliente</span></td>
+  </tr>
+</table>
+
+<p class="pequeno">Este documento é um recibo de prestação de serviço e não substitui nota fiscal.</p>
+
+<?!= include('Rodape', d) ?>
+</body>
+</html>

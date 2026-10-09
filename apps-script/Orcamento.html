@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body>
+<?!= include('Cabecalho', d) ?>
+
+<h2>Serviços</h2>
+<table class="dados">
+  <tr><th>Serviço</th><th class="centro">Qtd</th><th class="dir">Valor unit.</th><th class="dir">Total</th></tr>
+  <? d.itens.forEach(function (i) { ?>
+  <tr><td><?= i.nome ?></td><td class="centro"><?= qtdBR(i.qtd) ?> <?= i.unidade ?></td><td class="dir"><?= moeda(i.preco) ?></td><td class="dir"><?= moeda(num(i.qtd) * num(i.preco)) ?></td></tr>
+  <? }); ?>
+  <? if (d.valores.desl) { ?><tr><td colspan="3">Deslocamento</td><td class="dir"><?= moeda(d.valores.desl) ?></td></tr><? } ?>
+  <? if (d.valores.desc) { ?><tr><td colspan="3">Desconto</td><td class="dir">− <?= moeda(d.valores.desc) ?></td></tr><? } ?>
+  <? if (d.valores.ajuste) { ?><tr><td colspan="3">Ajuste para o valor mínimo do atendimento</td><td class="dir"><?= moeda(d.valores.ajuste) ?></td></tr><? } ?>
+  <? if (d.valores.mat) { ?><tr><td colspan="3">Materiais</td><td class="dir"><?= moeda(d.valores.mat) ?></td></tr><? } ?>
+  <tr class="total"><td colspan="3">TOTAL</td><td class="dir"><?= moeda(d.valores.total) ?></td></tr>
+</table>
+
+<h2>Condições</h2>
+<table class="dados">
+  <tr><td width="30%"><b>Material</b></td><td><?= d.at.material_modo === 'Pietro' ? 'Comprado pelo Pietro e repassado com a nota fiscal.' : 'Por conta do cliente (a lista é enviada antes).' ?></td></tr>
+  <tr><td><b>Validade</b></td><td><?= d.cfg.validade_orcamento || 15 ?> dias a partir de <?= dataBR(d.at.data_orcamento) ?></td></tr>
+  <tr><td><b>Garantia</b></td><td><?= d.cfg.garantia_dias || 90 ?> dias sobre a mão de obra</td></tr>
+  <tr><td><b>Pagamento</b></td><td>Pix, dinheiro ou cartão<? if (d.cfg.chave_pix) { ?> · Chave Pix: <?= d.cfg.chave_pix ?><? } ?></td></tr>
+  <? if (d.at.observacao) { ?><tr><td><b>Observação</b></td><td><?!= quebras(d.at.observacao) ?></td></tr><? } ?>
+</table>
+
+<p>✔ Preço fechado, combinado antes de começar &nbsp; ✔ Local limpo e organizado no final</p>
+
+<?!= include('Rodape', d) ?>
+</body>
+</html>

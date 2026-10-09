@@ -1,0 +1,49 @@
+<style>
+  @page { size: A4; margin: 12mm; }
+  body { font-family: Arial, Helvetica, sans-serif; color: #14254F; font-size: 10.5pt; margin: 0; }
+  table { border-collapse: collapse; }
+  .faixa { width: 100%; background: #F5C518; }
+  .faixa td { padding: 12px 14px; vertical-align: middle; }
+  .marca { font-size: 9pt; }
+  .nome { font-size: 22pt; font-weight: bold; margin: 2px 0; }
+  .doc-tipo { font-size: 15pt; font-weight: bold; }
+  h2 { font-size: 12pt; background: #17337A; color: #ffffff; padding: 6px 10px; margin: 16px 0 8px; }
+  .dados { width: 100%; }
+  .dados th { background: #FFF4C2; text-align: left; padding: 6px; border-bottom: 2px solid #17337A; font-size: 9.5pt; }
+  .dados td { padding: 6px; border-bottom: 1px solid #dddddd; font-size: 10pt; vertical-align: top; }
+  .dir { text-align: right; }
+  .centro { text-align: center; }
+  .total td { font-size: 13pt; font-weight: bold; background: #F5C518; border-bottom: none; }
+  .caixa { border: 1px solid #17337A; padding: 8px 10px; }
+  .pequeno { font-size: 8.5pt; color: #555555; }
+  .verde { color: #1E8E3E; font-weight: bold; }
+  .alerta { color: #B26A00; font-weight: bold; }
+  .rodape { margin-top: 20px; width: 100%; background: #17337A; color: #ffffff; }
+  .rodape td { padding: 10px 14px; font-size: 9.5pt; }
+  .amarelo { color: #F5C518; font-weight: bold; }
+  .fotos td { width: 50%; padding: 6px; vertical-align: top; text-align: center; }
+  .fotos img { border: 1px solid #cccccc; }
+  .legenda { font-size: 8.5pt; color: #555555; }
+</style>
+<table class="faixa">
+  <tr>
+    <td width="96"><? if (d.logo) { ?><img src="<?!= d.logo ?>" width="84" height="84"><? } ?></td>
+    <td>
+      <div class="marca">Reparos a domicílio · <?= d.cfg.cidade || 'Uberaba' ?> – MG</div>
+      <div class="nome"><?= d.cfg.nome_empresa || 'Pietro Resolve' ?></div>
+      <div>WhatsApp <?= telBR(d.cfg.telefone) ?> · Chamou, o Pietro resolve.</div>
+    </td>
+    <td class="dir">
+      <div class="doc-tipo"><?= d.titulo ?></div>
+      <div><b><?= d.numero ?></b></div>
+      <div class="marca">Emitido em <?= dataBR(hoje()) ?></div>
+    </td>
+  </tr>
+</table>
+
+<h2>Cliente</h2>
+<table class="dados">
+  <tr><td width="18%"><b>Nome</b></td><td><?= nomeCli(d.cli) ?></td></tr>
+  <tr><td><b>Telefone</b></td><td><?= telBR(d.cli.telefone) ?></td></tr>
+  <tr><td><b>Endereço</b></td><td><?= enderecoCli(d.cli) ?></td></tr>
+</table>

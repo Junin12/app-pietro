@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body>
+<?!= include('Cabecalho', d) ?>
+
+<h2>Atendimento</h2>
+<table class="dados">
+  <tr><td width="30%"><b>Número</b></td><td><?= pad4_(d.at.numero) ?></td></tr>
+  <tr><td><b>Início</b></td><td><?= dataHoraBR(d.at.data_inicio) ?></td></tr>
+  <tr><td><b>Conclusão</b></td><td><?= dataHoraBR(d.at.data_conclusao) ?></td></tr>
+  <? if (d.duracao) { ?><tr><td><b>Duração</b></td><td><?= d.duracao ?></td></tr><? } ?>
+</table>
+
+<h2>Serviços executados</h2>
+<table class="dados">
+  <? d.itens.forEach(function (i) { ?>
+  <tr><td width="6%" class="centro"><?= i.feito ? '✔' : '–' ?></td><td><?= qtdBR(i.qtd) ?> <?= i.unidade ?> · <?= i.nome ?></td></tr>
+  <? }); ?>
+</table>
+
+<?
+  var antes = d.fotos.filter(function (f) { return f.tipo === 'Antes'; });
+  var depois = d.fotos.filter(function (f) { return f.tipo === 'Depois'; });
+  var durante = d.fotos.filter(function (f) { return f.tipo === 'Durante'; });
+  var pares = Math.max(antes.length, depois.length);
+?>
+<h2>Registro fotográfico: antes × depois</h2>
+<table class="fotos" width="100%">
+  <tr><td><b>ANTES</b></td><td><b>DEPOIS</b></td></tr>
+  <? for (var k = 0; k < pares; k++) { ?>
+  <tr>
+    <td><? if (antes[k] && antes[k].src) { ?><img src="<?!= antes[k].src ?>" width="300"><div class="legenda"><?= antes[k].legenda ?></div><? } ?></td>
+    <td><? if (depois[k] && depois[k].src) { ?><img src="<?!= depois[k].src ?>" width="300"><div class="legenda"><?= depois[k].legenda ?></div><? } ?></td>
+  </tr>
+  <? } ?>
+</table>
+
+<? if (durante.length) { ?>
+<h2>Durante a execução</h2>
+<table class="fotos" width="100%">
+  <? for (var j = 0; j < durante.length; j += 2) { ?>
+  <tr>
+    <? [durante[j], durante[j + 1]].forEach(function (f) { ?>
+    <td><? if (f && f.src) { ?><img src="<?!= f.src ?>" width="300"><div class="legenda"><?= f.legenda ?></div><? } ?></td>
+    <? }); ?>
+  </tr>
+  <? } ?>
+</table>
+<? } ?>
+
+<? if (d.at.ocorrencias) { ?>
+<h2>O que foi feito / ocorrências</h2>
+<div class="caixa"><?!= quebras(d.at.ocorrencias) ?></div>
+<? } ?>
+
+<? if (d.mats.length) { ?>
+<h2>Materiais aplicados</h2>
+<table class="dados">
+  <tr><th>Material</th><th class="centro">Qtd</th><th>Fornecido por</th></tr>
+  <? d.mats.forEach(function (m) { ?>
+  <tr><td><?= m.descricao ?></td><td class="centro"><?= qtdBR(m.quantidade) ?></td><td><?= m.comprado_por === 'Pietro' ? 'Pietro' : 'Cliente' ?></td></tr>
+  <? }); ?>
+</table>
+<? } ?>
+
+<h2>Checklist de qualidade</h2>
+<table class="dados">
+  <tr><td><?= d.check.testado ? '✔' : '–' ?> Serviço testado e funcionando</td><td><?= d.check.limpo ? '✔' : '–' ?> Local limpo e organizado</td></tr>
+  <tr><td><?= d.check.conferido ? '✔' : '–' ?> Cliente conferiu o serviço</td><td><?= d.check.orientado ? '✔' : '–' ?> Orientações de uso repassadas</td></tr>
+</table>
+
+<h2>Recomendações de manutenção para maior vida útil</h2>
+<? if (d.dicas.length) { ?>
+<table class="dados">
+  <? d.dicas.forEach(function (x) { ?>
+  <tr><td width="35%"><b><?= x.servico ?></b></td><td><?= x.dica ?></td></tr>
+  <? }); ?>
+</table>
+<? } ?>
+<? if (d.at.recomendacoes_extra) { ?><p><b>Observações do Pietro:</b><br><?!= quebras(d.at.recomendacoes_extra) ?></p><? } ?>
+<? if (d.proxima) { ?>
+<div class="caixa"><b>Próxima revisão sugerida:</b> <?= d.proxima ?> (em <?= d.meses ?> meses). É só chamar no WhatsApp <?= telBR(d.cfg.telefone) ?>.</div>
+<? } ?>
+
+<h2>Garantia</h2>
+<p>Garantia de <b><?= d.cfg.garantia_dias || 90 ?> dias</b> sobre a mão de obra, conforme o Código de Defesa do Consumidor. Se notar qualquer problema, chame que eu volto para resolver.</p>
+
+<p><b>Obrigado pela confiança!</b> Chamou, o Pietro resolve.</p>
+
+<?!= include('Rodape', d) ?>
+</body>
+</html>
