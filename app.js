@@ -60,6 +60,12 @@ const nomeCompleto = c => c ? `${c.nome} ${c.sobrenome}`.trim() : 'Cliente remov
 const enderecoCompleto = c => c ? [c.endereco, c.bairro, c.cidade].filter(Boolean).join(', ') : '';
 const itensDe = a => { try { return JSON.parse(a.itens_json || '[]'); } catch { return []; } };
 const checkDe = a => { try { return JSON.parse(a.checklist_json || '{}'); } catch { return {}; } };
+const listaDe = a => { try { const l = JSON.parse(a.lista_materiais_json || '[]'); return Array.isArray(l) ? l : []; } catch { return []; } };
+const totalLista = l => r2(l.reduce((t, m) => t + num(m.qtd) * num(m.preco), 0));
+const PLURAL = { 'galão': 'galões', barra: 'barras', lata: 'latas', saco: 'sacos', folha: 'folhas', par: 'pares', kit: 'kits' };
+const qtdMat = m => num(m.qtd) !== 1 && PLURAL[m.unidade] ? `${qtdBR(m.qtd)} ${PLURAL[m.unidade]}` : m.unidade === 'un' ? qtdBR(m.qtd) + 'x' : `${qtdBR(m.qtd)} ${m.unidade}`;
+// Margem do orçamento: a que o Pietro escolheu nele ou, se não escolheu, a padrão dos Ajustes
+const margemDe = a => a.margem_material === '' || a.margem_material == null ? num(S.cfg.margem_material) : num(a.margem_material);
 const resumoItens = a => itensDe(a).map(i => `${qtdBR(i.qtd)}x ${i.nome}`).join(', ');
 const fmtQtd = i => qtdBR(i.qtd) + (['m²', 'hora'].includes(i.unidade) ? ' ' + i.unidade : 'x');
 const waLink = (tel, texto) => `https://wa.me/55${String(tel ?? '').replace(/\D/g, '')}` + (texto ? '?text=' + encodeURIComponent(texto) : '');
@@ -423,29 +429,72 @@ function tServicoForm(id) {
 
 /* ============================== ORÇAMENTO ============================== */
 
+const UI_RASC = { cat: '', buscaServ: '', voltar: false, buscaCli: '' }; // campos só da tela, não vão para a planilha
+
 function novoRasc(at) {
-  if (at) return { ...at, itens: itensDe(at), cat: CATEGORIAS[0], voltar: false, buscaCli: '' };
+  if (at) return { ...at, itens: itensDe(at), lista: listaDe(at), margem_material: margemDe(at), ...UI_RASC };
   return {
-    id: '', cliente_id: '', itens: [], deslocamento_tipo: 'Cidade', km: 0, valor_deslocamento: num(S.cfg.deslocamento_cidade),
-    material_modo: 'Cliente', desconto: 0, observacao: '', status: 'Orçamento', cat: CATEGORIAS[0], voltar: false, buscaCli: ''
+    id: '', cliente_id: '', itens: [], lista: [], deslocamento_tipo: 'Cidade', km: 0, valor_deslocamento: num(S.cfg.deslocamento_cidade),
+    material_modo: 'Cliente', margem_material: num(S.cfg.margem_material), desconto: 0, observacao: '', status: 'Orçamento', ...UI_RASC
   };
 }
 
-function valorMateriais(atId) {
+// Materiais que o Pietro já registrou na execução (valor real da nota)
+function baseMateriaisReais(atId) {
   if (!atId) return 0;
-  const base = soma(ativos(S.materiais).filter(m => m.atendimento_id === atId && m.comprado_por === 'Pietro' && m.repassar_cliente !== 'não'), 'valor_total');
-  return r2(base * (1 + num(S.cfg.margem_material) / 100));
+  return soma(ativos(S.materiais).filter(m => m.atendimento_id === atId && m.comprado_por === 'Pietro' && m.repassar_cliente !== 'não'), 'valor_total');
 }
 
-// Mesma regra do backend: mão de obra nunca abaixo do mínimo + materiais repassados com margem
+// Mesma regra do backend: mão de obra nunca abaixo do mínimo + materiais com margem.
+// Materiais: o valor real registrado na execução; enquanto não houver, a estimativa da lista (se o Pietro compra).
 function calcular(a) {
   const itens = a.itens || itensDe(a);
+  const lista = a.lista || listaDe(a);
   const sub = itens.reduce((t, i) => t + num(i.qtd) * num(i.preco), 0);
   const bruto = Math.max(sub + num(a.valor_deslocamento) - num(a.desconto), 0);
   const minimo = num(S.cfg.valor_minimo);
   const mao = sub > 0 && bruto < minimo ? minimo : bruto;
-  const mat = valorMateriais(a.id);
-  return { sub: r2(sub), mao: r2(mao), mat, total: r2(mao + mat), minimo: mao > bruto };
+  const real = baseMateriaisReais(a.id);
+  const estimado = !real && a.material_modo === 'Pietro';
+  const base = real || (estimado ? totalLista(lista) : 0);
+  const mat = r2(base * (1 + margemDe(a) / 100));
+  return { sub: r2(sub), mao: r2(mao), mat, total: r2(mao + mat), minimo: mao > bruto, estimado: estimado && mat > 0, lista: totalLista(lista) };
+}
+
+/* ---------- Lista de materiais do orçamento ---------- */
+
+// Serviços escolhidos (sem repetir a desmontagem) e a quantidade de cada um
+function servicosDoRasc() {
+  const m = new Map();
+  rasc.itens.filter(i => !i.desmontagem).forEach(i => {
+    const k = i.servico_id || 'item:' + i.nome;
+    const g = m.get(k) || { id: k, nome: i.nome, categoria: i.categoria, qtd: 0 };
+    g.qtd += num(i.qtd);
+    m.set(k, g);
+  });
+  return [...m.values()];
+}
+
+function sugestoes(s) {
+  const regras = MAT_SERVICO[s.nome] || MAT_CATEGORIA[s.categoria] || [];
+  return regras.filter(([k]) => MAT[k]).map(([k, q, escala]) => {
+    const [nome, unidade, preco] = MAT[k];
+    const bruto = escala ? q * Math.max(s.qtd, 1) : q;
+    return { servico_id: s.id, nome, unidade, preco, qtd: unidade === 'm' ? Math.ceil(bruto) : Math.max(1, Math.ceil(bruto - 0.001)) };
+  });
+}
+
+// Tira da lista os materiais de serviços removidos e acompanha a quantidade do serviço nos itens não editados
+function sincronizarLista() {
+  const servs = servicosDoRasc();
+  const ids = new Set(servs.map(s => s.id));
+  rasc.lista = rasc.lista.filter(m => ids.has(m.servico_id));
+  rasc.lista.forEach(m => {
+    if (!m.auto) return;
+    const s = servs.find(x => x.id === m.servico_id);
+    const sug = sugestoes(s).find(x => x.nome === m.nome);
+    if (sug) m.qtd = sug.qtd;
+  });
 }
 
 function tOrcamento(id) {
@@ -455,10 +504,14 @@ function tOrcamento(id) {
     if (at && ['Concluído', 'Cancelado'].includes(at.status)) return html`${topo('Orçamento', '#at/' + id)}<p class="vazio">Este atendimento já foi ${at.status.toLowerCase()} e não pode ser editado.</p>`;
     rasc = novoRasc(at);
   }
+  sincronizarLista();
   const c = cli(rasc.cliente_id);
-  const servs = ativos(S.servicos).filter(s => s.categoria === rasc.cat);
   const v = calcular(rasc);
-  depois.push(() => { const a = $('.chips .ativo'); if (a) a.parentElement.scrollLeft = a.offsetLeft - 16; });
+  const servsEscolhidos = servicosDoRasc();
+  const rolagem = $('#lista-serv') ? $('#lista-serv').scrollTop : 0; // mantém a lista no mesmo lugar ao adicionar
+  depois.push(() => { const l = $('#lista-serv'); if (l) l.scrollTop = rolagem; });
+  const catsComServico = CATEGORIAS.filter(cat => ativos(S.servicos).some(s => s.categoria === cat));
+  const padrao = num(S.cfg.margem_material);
   return html`${topo(rasc.id ? 'Editar orçamento nº ' + n4(rasc.numero) : 'Novo orçamento', rasc.id ? '#at/' + rasc.id : '#inicio')}
     ${rasc.id ? '' : html`<a class="link" href="#atendimentos/Orçamento">📋 Ver orçamentos já enviados</a>`}
 
@@ -471,12 +524,13 @@ function tOrcamento(id) {
         <button class="botao" data-acao="cadastrarNoOrc">+ Cadastrar cliente novo</button>`}
 
     <h2>2. Serviços</h2>
-    <div class="chips">${CATEGORIAS.map(cat => html`<button class="chip ${cat === rasc.cat ? 'ativo' : ''}" data-acao="categoria" data-cat="${cat}">${ICONE_CAT[cat]} ${cat}</button>`)}</div>
-    <div class="servicos">${servs.map(s => {
-      const q = rasc.itens.filter(i => i.servico_id === s.id && !i.desmontagem).reduce((t, i) => t + num(i.qtd), 0);
-      return html`<button class="serv ${q ? 'marcado' : ''}" data-acao="addServ" data-id="${s.id}">
-        <span>${s.nome}</span><b>${moeda(s.preco)}<small>/${s.unidade || 'un'}</small></b>${q ? html`<i class="qtd">✓ ${qtdBR(q)}</i>` : ''}</button>`;
-    })}</div>
+    <label class="sr" for="busca-serv">Buscar serviço</label>
+    <input id="busca-serv" type="search" placeholder="🔎 Buscar serviço pelo nome" data-on="buscaServ" autocomplete="off" value="${rasc.buscaServ}">
+    <div class="cats" role="group" aria-label="Filtrar serviços por categoria">
+      ${[['', '📋', 'Todos'], ...catsComServico.map(cat => [cat, ICONE_CAT[cat], cat])].map(([val, ico, txt]) =>
+        html`<button class="cat ${rasc.cat === val ? 'ativo' : ''}" data-acao="categoria" data-cat="${val}" aria-pressed="${rasc.cat === val}">${ico} ${txt}</button>`)}
+    </div>
+    <div class="lista-serv" id="lista-serv">${listaServicos()}</div>
 
     <h2>Escolhidos (${rasc.itens.length})</h2>
     ${rasc.itens.length ? rasc.itens.map(itemEscolhido) : html`<p class="vazio">Toque nos serviços acima para adicionar.</p>`}
@@ -491,11 +545,23 @@ function tOrcamento(id) {
     <label for="v-desloc">Valor do deslocamento (R$)</label>
     <input id="v-desloc" type="number" inputmode="decimal" min="0" step="0.01" value="${rasc.valor_deslocamento}" data-on="campoOrc" data-campo="valor_deslocamento">
 
-    <h2>4. Material</h2>
+    <h2>4. Lista de materiais</h2>
     <div class="opcoes">
-      <button class="opcao ${rasc.material_modo === 'Cliente' ? 'ativo' : ''}" data-acao="materialModo" data-modo="Cliente">🧾 Cliente compra<small>envio a lista</small></button>
-      <button class="opcao ${rasc.material_modo === 'Pietro' ? 'ativo' : ''}" data-acao="materialModo" data-modo="Pietro">🛒 Eu compro<small>repasse + ${qtdBR(S.cfg.margem_material)}%</small></button>
+      <button class="opcao ${rasc.material_modo === 'Cliente' ? 'ativo' : ''}" data-acao="materialModo" data-modo="Cliente">🧾 Cliente compra<small>lista vai no orçamento</small></button>
+      <button class="opcao ${rasc.material_modo === 'Pietro' ? 'ativo' : ''}" data-acao="materialModo" data-modo="Pietro">🛒 Eu compro<small>repasse + ${qtdBR(rasc.margem_material)}%</small></button>
     </div>
+    ${rasc.material_modo === 'Pietro' ? html`<div class="margem">
+      <label for="o-margem">Quanto cobrar sobre os materiais?</label>
+      <div class="margem-linha">
+        ${[...new Set([0, 5, 10, padrao])].sort((a, b) => a - b).map(p =>
+          html`<button class="cat ${num(rasc.margem_material) === p ? 'ativo' : ''}" data-acao="margem" data-v="${p}">${qtdBR(p)}%${p === padrao ? ' (padrão)' : ''}</button>`)}
+        <span class="pct"><input id="o-margem" type="number" inputmode="decimal" min="0" max="100" step="0.5" value="${rasc.margem_material}" data-on="margem" aria-label="Outra porcentagem"> %</span>
+      </div></div>` : ''}
+    ${servsEscolhidos.length
+      ? html`<p class="dica">Marque ✅ o que vai precisar e ajuste a quantidade. Preços: média estimada em Uberaba/MG (dá para mudar).</p>
+        ${servsEscolhidos.map(blocoMateriais)}`
+      : html`<p class="vazio">Escolha os serviços (passo 2) para montar a lista de materiais.</p>`}
+    <div id="mat-resumo">${resumoMateriais(v)}</div>
 
     <h2>5. Desconto e observação</h2>
     <label for="o-desc">Desconto (R$)</label>
@@ -510,9 +576,28 @@ function tOrcamento(id) {
 
     <footer class="rodape-total">
       <div class="valor"><span>Total</span><b id="orc-total">${moeda(v.total)}</b></div>
-      <small id="orc-min">${v.minimo ? `Aplicado o valor mínimo do atendimento (${moeda(S.cfg.valor_minimo)})` : ''}</small>
+      <small id="orc-detalhe">${detalheTotal(v)}</small>
       <button class="botao principal" data-acao="enviarOrc">💬 SALVAR E ENVIAR NO WHATSAPP</button>
     </footer>`;
+}
+
+// Lista de serviços que rola: filtrada pela categoria escolhida ou pela busca (a busca procura em todas)
+function listaServicos() {
+  const t = semAcento(rasc.buscaServ).trim();
+  const todos = ativos(S.servicos);
+  const lista = t ? todos.filter(s => semAcento(s.nome).includes(t)) : todos.filter(s => !rasc.cat || s.categoria === rasc.cat);
+  if (!lista.length) return html`<p class="vazio">Nenhum serviço encontrado.</p>`;
+  const linha = s => {
+    const q = rasc.itens.filter(i => i.servico_id === s.id && !i.desmontagem).reduce((tt, i) => tt + num(i.qtd), 0);
+    return html`<button class="serv-linha ${q ? 'marcado' : ''}" data-acao="addServ" data-id="${s.id}" aria-label="Adicionar ${s.nome}">
+      <span class="nome">${s.nome}<small>${moeda(s.preco)} por ${s.unidade || 'un'}</small></span>
+      <span class="add" aria-hidden="true">${q ? '✓ ' + qtdBR(q) : '+'}</span></button>`;
+  };
+  if (rasc.cat && !t) return lista.map(linha);
+  return CATEGORIAS.map(cat => {
+    const doCat = lista.filter(s => s.categoria === cat);
+    return doCat.length ? html`<p class="grupo-titulo">${ICONE_CAT[cat]} ${cat}</p>${doCat.map(linha)}` : '';
+  });
 }
 
 function itemEscolhido(i, k) {
@@ -521,29 +606,92 @@ function itemEscolhido(i, k) {
     <div class="linha">
       <div class="qtd-ctrl">
         <button data-acao="qtd" data-k="${k}" data-d="-1" aria-label="Diminuir quantidade">−</button>
-        <input type="number" inputmode="decimal" min="0" step="any" value="${i.qtd}" data-on="itemCampo" data-k="${k}" data-campo="qtd" aria-label="Quantidade de ${i.nome}">
+        <input type="number" inputmode="decimal" min="0" step="any" value="${i.qtd}" data-on="itemCampo" data-muda="renderOrc" data-k="${k}" data-campo="qtd" aria-label="Quantidade de ${i.nome}">
         <button data-acao="qtd" data-k="${k}" data-d="1" aria-label="Aumentar quantidade">+</button>
       </div>
       <span>${i.unidade || 'un'} ×</span>
       <label class="preco">R$ <input type="number" inputmode="decimal" min="0" step="0.01" value="${i.preco}" data-on="itemCampo" data-k="${k}" data-campo="preco" aria-label="Preço de ${i.nome}"></label>
     </div>
-    ${i.categoria === 'Montagem' && !i.desmontagem && !rasc.itens.some(x => x.desmontagem && x.origem === k)
+    ${i.categoria === 'Montagem' && !i.desmontagem && !rasc.itens.some(x => x.desmontagem && x.servico_id === i.servico_id)
       ? html`<button class="link" data-acao="desmontagem" data-k="${k}">+ desmontagem também (${Math.round(MARGEM_DESMONTAGEM * 100)}% do valor)</button>` : ''}
   </div>`;
+}
+
+// Um bloco por serviço: materiais sugeridos com ✅, quantidade e preço, e um campo para incluir outro
+function blocoMateriais(s, b) {
+  const sug = sugestoes(s);
+  const doServ = rasc.lista.filter(m => m.servico_id === s.id);
+  const linhas = [
+    ...sug.map(x => { const i = rasc.lista.findIndex(m => m.servico_id === s.id && m.nome === x.nome); return i >= 0 ? { i } : { sug: x }; }),
+    ...doServ.filter(m => !sug.some(x => x.nome === m.nome)).map(m => ({ i: rasc.lista.indexOf(m) }))
+  ];
+  return html`<details class="mat-bloco" open>
+    <summary><span>🔧 ${s.nome}</span><small id="mb-${b}">${resumoBloco(doServ)}</small></summary>
+    ${linhas.map(l => l.sug ? html`<div class="mat-linha">
+        <label class="mat-check"><input type="checkbox" data-muda="matMarcar" data-s="${s.id}" data-n="${l.sug.nome}">
+          <span>${l.sug.nome}<small>sugestão: ${qtdBR(l.sug.qtd)} ${l.sug.unidade} · ~${moeda(l.sug.preco)} cada</small></span></label></div>`
+      : linhaMaterial(rasc.lista[l.i], l.i, b))}
+    <form class="mat-outro" data-form="matOutro">
+      <input type="hidden" name="servico_id" value="${s.id}">
+      <label class="sr" for="mo-${b}">Outro material para ${s.nome}</label>
+      <input id="mo-${b}" name="nome" required maxlength="100" placeholder="✏️ Outro material que não está na lista" autocomplete="off">
+      <div class="mat-outro-linha">
+        <label>Qtd <input name="qtd" type="number" inputmode="decimal" min="0.01" step="any" value="1" required></label>
+        <label>R$ cada <input name="preco" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0,00"></label>
+        <button class="botao pequeno">+ Incluir</button>
+      </div>
+    </form>
+  </details>`;
+}
+
+const resumoBloco = l => l.length ? `${l.length} marcado(s) · ${moeda(totalLista(l))}` : 'nada marcado';
+
+function linhaMaterial(m, i, b) {
+  return html`<div class="mat-linha marcado">
+    <label class="mat-check"><input type="checkbox" checked data-muda="matDesmarcar" data-i="${i}"><span>${m.nome}</span></label>
+    <div class="mat-valores">
+      <div class="qtd-ctrl mini">
+        <button data-acao="matQtd" data-i="${i}" data-d="-1" aria-label="Diminuir quantidade de ${m.nome}">−</button>
+        <input type="number" inputmode="decimal" min="0" step="any" value="${m.qtd}" data-on="matCampo" data-campo="qtd" data-i="${i}" data-b="${b}" aria-label="Quantidade de ${m.nome}">
+        <button data-acao="matQtd" data-i="${i}" data-d="1" aria-label="Aumentar quantidade de ${m.nome}">+</button>
+      </div>
+      <span class="un">${m.unidade} ×</span>
+      <label class="preco">R$ <input type="number" inputmode="decimal" min="0" step="0.01" value="${m.preco}" data-on="matCampo" data-campo="preco" data-i="${i}" data-b="${b}" aria-label="Preço de ${m.nome}"></label>
+      <b class="mat-total" id="mt-${i}">${moeda(num(m.qtd) * num(m.preco))}</b>
+    </div></div>`;
+}
+
+function resumoMateriais(v) {
+  if (!rasc.lista.length) return '';
+  if (rasc.material_modo === 'Cliente') return html`<div class="mat-resumo"><b>🧾 Lista do cliente: ${rasc.lista.length} item(ns) · ~${moeda(v.lista)}</b>
+    <small>Vai junto no orçamento. Não entra no total: o cliente compra.</small></div>`;
+  if (!v.estimado) return html`<div class="mat-resumo"><b>🛒 Materiais já registrados na execução: ${moeda(v.mat)}</b>
+    <small>O valor real (nota fiscal) substituiu a estimativa da lista.</small></div>`;
+  return html`<div class="mat-resumo"><b>🛒 Materiais ${moeda(v.lista)} + ${qtdBR(rasc.margem_material)}% = ${moeda(v.mat)}</b>
+    <small>Entra no total como estimativa. O valor final segue a nota fiscal.</small></div>`;
+}
+
+function detalheTotal(v) {
+  const partes = [];
+  if (v.mat) partes.push(`Mão de obra ${moeda(v.mao)} + materiais ${moeda(v.mat)}${v.estimado ? ' (estimativa)' : ''}`);
+  if (v.minimo) partes.push(`Aplicado o valor mínimo do atendimento (${moeda(S.cfg.valor_minimo)})`);
+  return partes.join(' · ');
 }
 
 function atualizarTotal() {
   const v = calcular(rasc);
   $('#orc-total').textContent = moeda(v.total);
-  $('#orc-min').textContent = v.minimo ? `Aplicado o valor mínimo do atendimento (${moeda(S.cfg.valor_minimo)})` : '';
+  $('#orc-detalhe').textContent = detalheTotal(v);
+  pintar('#mat-resumo', resumoMateriais(v));
 }
 
 async function salvarOrcamento() {
   if (!rasc.cliente_id) throw new Error('Escolha o cliente (passo 1).');
   if (!rasc.itens.length) throw new Error('Escolha pelo menos um serviço (passo 2).');
   if (rasc.itens.some(i => num(i.qtd) <= 0)) throw new Error('Confira as quantidades dos serviços.');
-  const { cat, voltar, buscaCli, itens, ...resto } = rasc;
-  const r = await api('salvar_atendimento', { registro: { ...resto, itens_json: itens } }, 'Salvando orçamento…');
+  const resto = Object.fromEntries(Object.entries(rasc).filter(([k]) => !(k in UI_RASC) && !['itens', 'lista'].includes(k)));
+  const lista = rasc.lista.map(({ servico_id, nome, unidade, qtd, preco }) => ({ servico_id, nome, unidade, qtd, preco }));
+  const r = await api('salvar_atendimento', { registro: { ...resto, itens_json: rasc.itens, lista_materiais_json: lista } }, 'Salvando orçamento…');
   gravarLocal('exec_' + r.resultado.id, null); // a lista de serviços mudou: descarta anotações antigas
   if (exec && exec.id === r.resultado.id) exec = null;
   rasc = null;
@@ -564,9 +712,16 @@ function mensagemOrcamento(at) {
   if (num(at.valor_deslocamento)) L.push(`🚗 Deslocamento – ${moeda(at.valor_deslocamento)}`);
   if (num(at.desconto)) L.push(`🏷️ Desconto – ${moeda(at.desconto)}`);
   if (v.minimo) L.push(`ℹ️ Aplicado o valor mínimo do atendimento`);
-  if (v.mat) L.push(`🧱 Materiais – ${moeda(v.mat)}`);
-  L.push('', `💰 *Total: ${moeda(at.valor_total)}*`,
-    `🧱 Material: ${at.material_modo === 'Pietro' ? 'eu compro e repasso com a nota fiscal' : 'por conta do cliente, envio a lista'}`);
+  if (v.mat) L.push(`🧱 Materiais${v.estimado ? ' (estimativa)' : ''} – ${moeda(v.mat)}`);
+  L.push('', `💰 *Total: ${moeda(at.valor_total)}*`);
+  const lista = listaDe(at);
+  const pietro = at.material_modo === 'Pietro';
+  if (lista.length) {
+    L.push('', pietro ? '🛒 *Materiais que eu compro*' : '🧾 *Lista de materiais (por sua conta)*',
+      ...lista.map(m => `• ${qtdMat(m)} ${m.nome}` + (pietro ? '' : ` – ~${moeda(num(m.qtd) * num(m.preco))}`)));
+    if (!pietro) L.push(`Estimativa em ${cfg.cidade || 'Uberaba'}: ~${moeda(totalLista(lista))}`);
+  }
+  L.push('', `🧱 Material: ${pietro ? 'eu compro e repasso com a nota fiscal' + (v.estimado ? ' (valor final conforme a nota)' : '') : 'por conta do cliente' + (lista.length ? ' (lista acima)' : '')}`);
   if (at.observacao) L.push(`📝 ${at.observacao}`);
   L.push('', '✅ Preço fechado, combinado antes de começar',
     `✅ Garantia de ${cfg.garantia_dias || 90} dias no serviço`,
@@ -633,14 +788,23 @@ function tAtendimento(id) {
         ${num(a.valor_deslocamento) ? linhaValor('Deslocamento', a.valor_deslocamento) : ''}
         ${num(a.desconto) ? linhaValor('Desconto', -num(a.desconto)) : ''}
         ${minimoAplicado(a) ? html`<tr><td colspan="2"><small>Aplicado o valor mínimo do atendimento</small></td></tr>` : ''}
-        ${num(a.valor_materiais) ? linhaValor('Materiais (repasse)', a.valor_materiais) : ''}
+        ${num(a.valor_materiais) ? linhaValor(baseMateriaisReais(a.id) ? 'Materiais (repasse)' : `Materiais (estimativa + ${qtdBR(margemDe(a))}%)`, a.valor_materiais) : ''}
       </tbody><tfoot><tr><th>Total</th><th class="dir">${moeda(a.valor_total)}</th></tr></tfoot></table>
       <p class="pequeno">Orçado em ${dataBR(a.data_orcamento)}${a.data_agendada ? ' · Agendado: ' + dataHoraBR(a.data_agendada) : ''}${a.data_conclusao ? ' · Concluído: ' + dataHoraBR(a.data_conclusao) : ''}${a.pagamento === 'Pago' ? ` · Pago em ${dataBR(a.data_pagamento)} (${a.forma_pagamento})` : ''}</p>
       ${a.observacao ? html`<p class="obs">📝 ${a.observacao}</p>` : ''}
     </section>
+    ${cartaoLista(a)}
     <div class="pilha">${acoesAt(a, c)}</div>
     ${docs.length ? html`<h2>📁 Documentos</h2>${docs.map(itemDoc)}` : ''}
     <button class="botao perigo" style="margin-top:28px" data-acao="excluirAt" data-id="${a.id}">🗑️ Excluir ${a.status === 'Orçamento' ? 'orçamento' : 'atendimento'}</button>`;
+}
+
+function cartaoLista(a) {
+  const lista = listaDe(a);
+  if (!lista.length) return '';
+  return html`<section class="cartao"><h3>🧱 Lista de materiais · ${a.material_modo === 'Pietro' ? 'eu compro' : 'cliente compra'}</h3>
+    <table class="tabela"><tbody>${lista.map(m => linhaValor(`${qtdMat(m)} ${m.nome}`, num(m.qtd) * num(m.preco)))}</tbody>
+      <tfoot><tr><th>Estimativa</th><th class="dir">${moeda(totalLista(lista))}</th></tr></tfoot></table></section>`;
 }
 
 function acoesAt(a, c) {
@@ -726,6 +890,11 @@ function tExec(id) {
         <small>${qtdBR(m.quantidade)} × ${moeda(m.valor_unitario)} · comprado por ${m.comprado_por}${m.comprado_por === 'Pietro' && m.repassar_cliente !== 'não' ? ' · cobrado do cliente' : ''}</small></div>
         <div class="dir"><b>${moeda(m.valor_total)}</b>${fechado ? '' : html`<button class="x" data-acao="tirarMaterial" data-id="${m.id}" aria-label="Remover ${m.descricao}">✕</button>`}</div></div>`)
       : html`<p class="vazio">Nenhum material registrado.</p>`}
+    ${fechado || !listaDe(a).length ? '' : html`<details class="filtros"><summary>📋 Lista do orçamento (${listaDe(a).length})</summary>
+      <p class="dica">Toque em um item para registrar o que foi usado, já com quantidade e preço estimado (confira com a nota).</p>
+      ${listaDe(a).map(m => html`<button class="item" style="width:100%;font:inherit;text-align:left;cursor:pointer" data-acao="novoMaterial" data-id="${id}"
+          data-desc="${m.nome}" data-q="${m.qtd}" data-v="${m.preco}">
+        <div><b>${m.nome}</b><small>${qtdMat(m)} · ~${moeda(m.preco)} cada</small></div><span aria-hidden="true">+</span></button>`)}</details>`}
     ${fechado ? '' : html`<button class="botao" data-acao="novoMaterial" data-id="${id}">+ Adicionar material</button>`}
 
     <h2>✅ Checklist de qualidade</h2>
@@ -1135,7 +1304,7 @@ const ACOES = {
 
   // Orçamento
   novoOrcamento: d => { rasc = novoRasc(); rasc.cliente_id = d.cliente; ir('#orcamento'); },
-  categoria: d => { rasc.cat = d.cat; render(); },
+  categoria: d => { rasc.cat = d.cat; rasc.buscaServ = ''; render(); const l = $('#lista-serv'); if (l) l.scrollTop = 0; },
   addServ: d => {
     const s = S.servicos.find(x => x.id === d.id);
     const ja = rasc.itens.find(i => i.servico_id === s.id && !i.desmontagem);
@@ -1153,7 +1322,15 @@ const ACOES = {
   tirarItem: d => { rasc.itens.splice(d.k, 1); render(); },
   desmontagem: d => {
     const i = rasc.itens[d.k];
-    rasc.itens.push({ ...i, nome: 'Desmontagem – ' + i.nome, preco: r2(num(i.preco) * MARGEM_DESMONTAGEM), desmontagem: true, origem: Number(d.k) });
+    rasc.itens.push({ ...i, nome: 'Desmontagem – ' + i.nome, preco: r2(num(i.preco) * MARGEM_DESMONTAGEM), desmontagem: true });
+    render();
+  },
+  margem: d => { rasc.margem_material = num(d.v); render(); },
+  matQtd: d => {
+    const m = rasc.lista[d.i];
+    m.qtd = r2(num(m.qtd) + Number(d.d));
+    m.auto = false;
+    if (m.qtd <= 0) rasc.lista.splice(d.i, 1);
     render();
   },
   desloc: d => {
@@ -1282,18 +1459,20 @@ const ACOES = {
       <button type="button" class="botao" data-acao="fechar">Voltar</button></form>`);
   },
   novoMaterial: d => {
+    const a = atd(d.id);
+    const pietro = a.material_modo !== 'Cliente';
     abrirDialogo(html`<form data-form="material"><h2>🧱 Material usado</h2>
       <input type="hidden" name="atendimento_id" value="${d.id}">
       <label for="m-desc">O que foi usado? <span class="obrig">*</span></label>
-      <input id="m-desc" name="descricao" required maxlength="150" placeholder="Ex.: resistência 220 V">
+      <input id="m-desc" name="descricao" required maxlength="150" placeholder="Ex.: resistência 220 V" value="${d.desc || ''}">
       <div class="acoes2">
-        <div><label for="m-q">Quantidade</label><input id="m-q" name="quantidade" type="number" inputmode="decimal" min="0.01" step="any" value="1" required></div>
-        <div><label for="m-v">Valor unitário (R$)</label><input id="m-v" name="valor_unitario" type="number" inputmode="decimal" min="0" step="0.01" required></div>
+        <div><label for="m-q">Quantidade</label><input id="m-q" name="quantidade" type="number" inputmode="decimal" min="0.01" step="any" value="${d.q || 1}" required></div>
+        <div><label for="m-v">Valor unitário (R$)</label><input id="m-v" name="valor_unitario" type="number" inputmode="decimal" min="0" step="0.01" required value="${d.v || ''}"></div>
       </div>
       <fieldset class="formas"><legend>Quem comprou?</legend>
-        <label class="opcao-radio"><input type="radio" name="comprado_por" value="Pietro" checked> Eu (Pietro)</label>
-        <label class="opcao-radio"><input type="radio" name="comprado_por" value="Cliente"> O cliente</label></fieldset>
-      <label class="check"><input type="checkbox" name="repassar" value="sim" checked> Cobrar do cliente (+${qtdBR(S.cfg.margem_material)}%), se fui eu que comprei</label>
+        <label class="opcao-radio"><input type="radio" name="comprado_por" value="Pietro" ${pietro ? 'checked' : ''}> Eu (Pietro)</label>
+        <label class="opcao-radio"><input type="radio" name="comprado_por" value="Cliente" ${pietro ? '' : 'checked'}> O cliente</label></fieldset>
+      <label class="check"><input type="checkbox" name="repassar" value="sim" checked> Cobrar do cliente (+${qtdBR(margemDe(a))}%), se fui eu que comprei</label>
       <button class="botao principal">Salvar material</button>
       <button type="button" class="botao" data-acao="fechar">Voltar</button></form>`);
   },
@@ -1367,6 +1546,13 @@ const FORMS = {
       ir('#orcamento' + (rasc.id ? '/' + rasc.id : ''));
     } else ir('#cliente/' + r.resultado.id);
   },
+  matOutro: d => {
+    const nome = String(d.nome || '').trim();
+    if (!nome) throw new Error('Escreva o nome do material.');
+    rasc.lista.push({ servico_id: d.servico_id, nome, unidade: 'un', qtd: num(d.qtd) > 0 ? r2(num(d.qtd)) : 1, preco: r2(num(d.preco)), auto: false });
+    render();
+    aviso(`${nome} incluído na lista`);
+  },
   servico: async d => {
     await api('salvar', { aba: 'SERVICOS', registro: d }, 'Salvando serviço…');
     aviso('Serviço salvo!');
@@ -1438,6 +1624,20 @@ const FORMS = {
 const AO_DIGITAR = {
   buscaClientes: el => pintar('#lista-clientes', listaClientes(el.value)),
   buscaCliOrc: el => { rasc.buscaCli = el.value; pintar('#cli-orc', listaClientes(el.value, true)); },
+  buscaServ: el => { rasc.buscaServ = el.value; pintar('#lista-serv', listaServicos()); $('#lista-serv').scrollTop = 0; },
+  margem: el => {
+    rasc.margem_material = Math.min(100, num(el.value));
+    $$('.margem .cat').forEach(b => b.classList.toggle('ativo', num(b.dataset.v) === rasc.margem_material));
+    atualizarTotal();
+  },
+  matCampo: el => {
+    const m = rasc.lista[el.dataset.i];
+    m[el.dataset.campo] = num(el.value);
+    m.auto = false;
+    $('#mt-' + el.dataset.i).textContent = moeda(num(m.qtd) * num(m.preco));
+    $('#mb-' + el.dataset.b).textContent = resumoBloco(rasc.lista.filter(x => x.servico_id === m.servico_id));
+    atualizarTotal();
+  },
   mascaraTel: el => {
     const d = el.value.replace(/\D/g, '').slice(0, 11);
     el.value = d.length > 6 ? `(${d.slice(0, 2)}) ${d.slice(2, d.length - 4)}-${d.slice(-4)}` : d.length > 2 ? `(${d.slice(0, 2)}) ${d.slice(2)}` : d;
@@ -1467,6 +1667,14 @@ const AO_MUDAR = {
     carregando(false);
     await enviarFila();
   },
+  renderOrc: () => render(),
+  matMarcar: el => {
+    const s = servicosDoRasc().find(x => x.id === el.dataset.s);
+    const sug = s && sugestoes(s).find(x => x.nome === el.dataset.n);
+    if (sug) rasc.lista.push({ ...sug, auto: true });
+    render();
+  },
+  matDesmarcar: el => { rasc.lista.splice(el.dataset.i, 1); render(); },
   feito: el => { exec.itens[el.dataset.k].feito = el.checked; guardarExec(); },
   check: el => { exec.checklist[el.dataset.k] = el.checked; guardarExec(); },
   dashCampo: el => {

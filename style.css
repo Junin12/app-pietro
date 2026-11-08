@@ -201,17 +201,71 @@ legend { font-weight: 600; padding: 0; }
 .chip.ativo { background: var(--azul); border-color: var(--azul); color: var(--branco); }
 
 /* ---------- Orçamento ---------- */
-.servicos { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.serv {
-  position: relative; display: flex; flex-direction: column; justify-content: space-between; gap: 6px;
-  min-height: 96px; padding: 10px;
-  background: var(--branco); border: 2px solid var(--linha); border-radius: 12px;
-  font: inherit; font-size: .85rem; text-align: left; color: var(--texto); cursor: pointer;
+/* Filtro de categorias: todas visíveis, quebram linha (sem rolar para o lado) */
+.cats { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.cat {
+  min-height: 40px; padding: 6px 12px;
+  border: 2px solid var(--linha); border-radius: 99px; background: var(--branco);
+  font: inherit; font-size: .85rem; font-weight: 600; color: var(--texto); cursor: pointer;
 }
-.serv b { font-size: .95rem; }
-.serv b small { display: inline; }
-.serv.marcado { border-color: var(--verde); background: #F1FBF3; }
-.serv .qtd { position: absolute; top: 6px; right: 6px; background: var(--verde); color: var(--branco); border-radius: 99px; padding: 0 8px; font-style: normal; font-weight: 700; font-size: .8rem; }
+.cat.ativo { background: var(--azul); border-color: var(--azul); color: var(--branco); }
+/* Lista de serviços que rola dentro da própria caixa */
+.lista-serv {
+  max-height: min(52vh, 440px); overflow-y: auto; overscroll-behavior: contain;
+  background: var(--branco); border: 2px solid var(--linha); border-radius: var(--raio);
+  -webkit-overflow-scrolling: touch;
+}
+.lista-serv .vazio { margin: 0; }
+.grupo-titulo {
+  position: sticky; top: 0; z-index: 1; margin: 0; padding: 6px 12px;
+  background: var(--amarelo-claro); font-size: .85rem; font-weight: 700;
+}
+.serv-linha {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  width: 100%; min-height: 60px; padding: 8px 12px;
+  border: 0; border-bottom: 1px solid var(--linha); background: none;
+  font: inherit; font-size: .95rem; text-align: left; color: var(--texto); cursor: pointer;
+}
+.serv-linha:last-child { border-bottom: 0; }
+.serv-linha .nome { min-width: 0; flex: 1; }
+.serv-linha .add {
+  flex: none; min-width: 44px; height: 44px; padding: 0 10px; border-radius: 99px;
+  display: flex; align-items: center; justify-content: center;
+  border: 2px solid var(--azul); color: var(--azul); font-weight: 700; font-size: 1.2rem;
+}
+.serv-linha.marcado { background: #F1FBF3; }
+.serv-linha.marcado .add { background: var(--verde); border-color: var(--verde); color: var(--branco); font-size: .9rem; }
+.serv-linha:active { background: var(--amarelo-claro); }
+
+/* Lista de materiais por serviço */
+.margem { background: var(--branco); border-radius: var(--raio); padding: 4px 12px 12px; margin: 10px 0; box-shadow: var(--sombra); }
+.margem-linha { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.margem .pct { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.margem .pct input { width: 84px; min-height: 44px; margin: 0; text-align: center; }
+.mat-bloco { background: var(--branco); border-radius: var(--raio); margin: 10px 0; box-shadow: var(--sombra); overflow: hidden; }
+.mat-bloco summary {
+  display: flex; flex-direction: column; gap: 2px; padding: 12px; min-height: 56px;
+  font-weight: 700; cursor: pointer; background: #F7F4E8;
+}
+.mat-linha { padding: 6px 12px; border-top: 1px solid var(--linha); }
+.mat-linha.marcado { background: #F1FBF3; }
+.mat-check { display: flex; align-items: center; gap: 12px; margin: 0; min-height: 48px; font-weight: 400; cursor: pointer; }
+.mat-check input { width: 26px; height: 26px; min-height: 0; margin: 0; flex: none; accent-color: var(--verde); }
+.mat-linha.marcado .mat-check { font-weight: 600; }
+.mat-valores { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 0 0 6px 38px; }
+.mat-valores .un { font-size: .85rem; color: var(--cinza); }
+.mat-valores .preco { min-width: 110px; flex: 1; font-weight: 400; }
+.mat-total { margin-left: auto; white-space: nowrap; }
+.qtd-ctrl.mini button { width: 40px; height: 40px; font-size: 1.2rem; }
+.qtd-ctrl.mini input { width: 56px; min-height: 40px; }
+.mat-valores .preco input { min-height: 40px; }
+.mat-outro { padding: 10px 12px 12px; border-top: 1px dashed #C9C3AE; }
+.mat-outro input { margin-top: 0; min-height: 44px; }
+.mat-outro-linha { display: flex; align-items: flex-end; gap: 8px; margin-top: 6px; }
+.mat-outro-linha label { flex: 1; margin: 0; font-size: .8rem; }
+.mat-outro-linha input { margin-top: 2px; }
+.mat-outro-linha .botao { flex: none; margin: 0; min-height: 44px; }
+.mat-resumo { background: var(--amarelo-claro); border-radius: 12px; padding: 10px 12px; margin: 10px 0; }
 .escolhido-item { background: var(--branco); border: 2px solid var(--verde); border-radius: 12px; padding: 10px; margin: 8px 0; }
 .escolhido-item .nome { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .escolhido-item .linha { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
@@ -314,5 +368,4 @@ dialog h2 { margin-top: 0; }
 .erro-tela { padding-top: 40px; text-align: center; }
 
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } .botao:active { transform: none; } }
-@media (min-width: 560px) { .servicos { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 360px) { body { font-size: 17px; } .resumo, .cards3 { grid-template-columns: 1fr; } }

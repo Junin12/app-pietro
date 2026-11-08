@@ -20,7 +20,7 @@ const ABAS = {
   ATENDIMENTOS: ['id', 'numero', 'cliente_id', 'itens_json', 'subtotal_servicos', 'deslocamento_tipo', 'km', 'valor_deslocamento',
     'material_modo', 'valor_materiais', 'desconto', 'valor_total', 'status', 'data_orcamento', 'data_agendada', 'data_inicio',
     'data_conclusao', 'ocorrencias', 'checklist_json', 'recomendacoes_extra', 'observacao', 'pagamento', 'forma_pagamento',
-    'data_pagamento', 'criado_em', 'atualizado_em'],
+    'data_pagamento', 'criado_em', 'atualizado_em', 'lista_materiais_json', 'margem_material'],
   FOTOS: ['id', 'atendimento_id', 'tipo', 'legenda', 'file_id', 'data', 'ativo'],
   MATERIAIS: ['id', 'atendimento_id', 'descricao', 'quantidade', 'valor_unitario', 'valor_total', 'comprado_por', 'repassar_cliente', 'data', 'ativo'],
   CARTEIRA: ['id', 'data', 'tipo', 'categoria', 'descricao', 'valor', 'forma_pagamento', 'atendimento_id', 'cliente_id', 'origem_id', 'automatico', 'ativo', 'criado_em', 'atualizado_em'],
@@ -70,7 +70,7 @@ const CAMPOS = {
   },
   ATENDIMENTOS: {
     cliente_id: { obr: 1, max: 40, rot: 'Cliente' }, deslocamento_tipo: { lista: ['Cidade', 'Fora'] }, km: { num: 1 },
-    valor_deslocamento: { num: 1 }, material_modo: { lista: ['Cliente', 'Pietro'] }, desconto: { num: 1 },
+    valor_deslocamento: { num: 1 }, material_modo: { lista: ['Cliente', 'Pietro'] }, desconto: { num: 1 }, margem_material: { num: 1 },
     status: { lista: STATUS }, data_agendada: { max: 16 }, observacao: { max: 500 },
     ocorrencias: { max: 4000 }, recomendacoes_extra: { max: 2000 }
   }
@@ -186,6 +186,11 @@ function testeCalculo() {
   r = calcularValores_({ id: 'x', itens_json: '[{"qtd":1,"preco":100}]', valor_deslocamento: 0, desconto: 0 },
     [{ atendimento_id: 'x', comprado_por: 'Pietro', repassar_cliente: 'sim', valor_total: 50, ativo: 'sim' }], cfg);
   igual(r.valor_total, 156, 'material com margem');
+  const lista = '[{"qtd":2,"preco":25}]';
+  r = calcularValores_({ itens_json: '[{"qtd":1,"preco":100}]', material_modo: 'Pietro', lista_materiais_json: lista, margem_material: 10 }, [], cfg);
+  igual(r.valor_total, 155, 'estimativa da lista com margem escolhida');
+  r = calcularValores_({ itens_json: '[{"qtd":1,"preco":100}]', material_modo: 'Cliente', lista_materiais_json: lista }, [], cfg);
+  igual(r.valor_total, 100, 'lista do cliente fora do total');
   Logger.log('Cálculos OK');
 }
 
@@ -379,9 +384,12 @@ function bloquearAutomatico_(id) {
 /* ============================== ATENDIMENTOS ============================== */
 
 function salvar_atendimento(d) {
+  garantirColunas_('ATENDIMENTOS');
   const r = d.registro || {};
   const at = limpar_(r, CAMPOS.ATENDIMENTOS);
+  if (at.margem_material !== '' && at.margem_material > 100) throw erro('A margem dos materiais vai até 100%.');
   at.itens_json = JSON.stringify(limparItens_(r.itens_json));
+  at.lista_materiais_json = JSON.stringify(limparLista_(r.lista_materiais_json));
   at.checklist_json = JSON.stringify(limparChecklist_(r.checklist_json));
   if (!ler('CLIENTES').some(c => c.id === at.cliente_id)) throw erro('Cliente não encontrado.');
 
@@ -405,14 +413,22 @@ function salvar_atendimento(d) {
   return comDados(gravar_('ATENDIMENTOS', null, at));
 }
 
-// Regra de valores: mão de obra (serviços + deslocamento − desconto, nunca abaixo do mínimo) + materiais repassados com margem
+// Margem do atendimento: a escolhida no orçamento ou, se vazia, a padrão dos Ajustes
+function margemDe_(at, cfg) {
+  const m = at.margem_material;
+  return m === '' || m === undefined || m === null ? num(cfg.margem_material) : num(m);
+}
+
+// Regra de valores: mão de obra (serviços + deslocamento − desconto, nunca abaixo do mínimo) + materiais com margem.
+// Materiais: o valor real registrado na execução; enquanto não houver, a estimativa da lista (quando o Pietro compra).
 function calcularValores_(at, materiais, cfg) {
   const itens = typeof at.itens_json === 'string' ? JSON.parse(at.itens_json || '[]') : (at.itens_json || []);
   const sub = itens.reduce((t, i) => t + num(i.qtd) * num(i.preco), 0);
-  const base = materiais
+  const real = materiais
     .filter(m => at.id && m.atendimento_id === at.id && m.ativo !== 'não' && m.comprado_por === 'Pietro' && m.repassar_cliente !== 'não')
     .reduce((t, m) => t + num(m.valor_total), 0);
-  const mat = base * (1 + num(cfg.margem_material) / 100);
+  const estimado = !real && at.material_modo === 'Pietro' ? listaDe_(at).reduce((t, m) => t + num(m.qtd) * num(m.preco), 0) : 0;
+  const mat = (real || estimado) * (1 + margemDe_(at, cfg) / 100);
   const bruto = Math.max(sub + num(at.valor_deslocamento) - num(at.desconto), 0);
   const minimo = num(cfg.valor_minimo);
   const mao = sub > 0 && bruto < minimo ? minimo : bruto;
@@ -615,11 +631,15 @@ function gerarDoc_(tipo, at) {
   const itens = JSON.parse(at.itens_json || '[]');
   const numero = PREFIXO[tipo] + '-' + pad4_(at.numero);
   const fotos = tipo === 'Relatório de Qualidade' ? fotosDo_(at.id) : []; // fotos só no relatório
-  const margem = 1 + num(cfg.margem_material) / 100;
+  const margem = 1 + margemDe_(at, cfg) / 100;
+  const lista = listaDe_(at);
 
   const t = HtmlService.createTemplateFromFile(MODELO[tipo]);
   t.d = {
-    titulo: tipo, numero, at, cli, cfg, itens,
+    titulo: tipo, numero, at, cli, cfg, itens, lista,
+    totalLista: r2(lista.reduce((s, m) => s + num(m.qtd) * num(m.preco), 0)),
+    materialEstimado: at.material_modo === 'Pietro' && num(at.valor_materiais) > 0 &&
+      !ler('MATERIAIS').some(m => m.atendimento_id === at.id && m.ativo !== 'não' && m.comprado_por === 'Pietro' && m.repassar_cliente !== 'não'),
     logo: typeof LOGO_BASE64 === 'undefined' ? '' : 'data:image/jpeg;base64,' + LOGO_BASE64,
     valores: resumoValores_(at, itens),
     mats: ler('MATERIAIS').filter(m => m.atendimento_id === at.id && m.ativo !== 'não').map(m => Object.assign(m, {
@@ -897,6 +917,38 @@ function limparItens_(entrada) {
       qtd: r2(qtd), preco: r2(preco), feito: !!i.feito, desmontagem: !!i.desmontagem
     };
   });
+}
+
+function listaDe_(at) {
+  try {
+    const l = typeof at.lista_materiais_json === 'string' ? JSON.parse(at.lista_materiais_json || '[]') : (at.lista_materiais_json || []);
+    return Array.isArray(l) ? l : [];
+  } catch (e) { return []; }
+}
+
+// Lista de materiais do orçamento (estimativa): nome, unidade, quantidade e preço
+function limparLista_(entrada) {
+  let l;
+  try { l = typeof entrada === 'string' ? JSON.parse(entrada || '[]') : (entrada || []); } catch (e) { throw erro('Lista de materiais inválida.'); }
+  if (!Array.isArray(l)) return [];
+  return l.slice(0, 150).map(m => ({
+    servico_id: String(m.servico_id || '').slice(0, 60), nome: String(m.nome || '').trim().slice(0, 100),
+    unidade: String(m.unidade || 'un').slice(0, 20), qtd: r2(Math.max(num(m.qtd), 0)), preco: r2(Math.max(num(m.preco), 0))
+  })).filter(m => m.nome && m.qtd > 0);
+}
+
+// Acrescenta no fim da aba as colunas novas (ex.: lista de materiais) sem precisar rodar o setup() de novo
+function garantirColunas_(nome) {
+  const sh = aba_(nome);
+  const cab = ABAS[nome];
+  const n = sh.getLastColumn();
+  const atual = n ? sh.getRange(1, 1, 1, n).getValues()[0] : [];
+  if (atual.length >= cab.length && cab.every((c, j) => atual[j] === c)) return;
+  if (!cab.slice(0, atual.length).every((c, j) => atual[j] === c)) return; // cabeçalho diferente: não mexe
+  if (sh.getMaxColumns() < cab.length) sh.insertColumnsAfter(sh.getMaxColumns(), cab.length - sh.getMaxColumns());
+  sh.getRange(1, atual.length + 1, sh.getMaxRows(), cab.length - atual.length).setNumberFormat('@');
+  sh.getRange(1, 1, 1, cab.length).setValues([cab]).setFontWeight('bold').setBackground('#F5C518');
+  mudou_(nome);
 }
 
 function limparChecklist_(entrada) {

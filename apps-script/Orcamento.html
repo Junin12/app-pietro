@@ -13,13 +13,24 @@
   <? if (d.valores.desl) { ?><tr><td colspan="3">Deslocamento</td><td class="dir"><?= moeda(d.valores.desl) ?></td></tr><? } ?>
   <? if (d.valores.desc) { ?><tr><td colspan="3">Desconto</td><td class="dir">− <?= moeda(d.valores.desc) ?></td></tr><? } ?>
   <? if (d.valores.ajuste) { ?><tr><td colspan="3">Ajuste para o valor mínimo do atendimento</td><td class="dir"><?= moeda(d.valores.ajuste) ?></td></tr><? } ?>
-  <? if (d.valores.mat) { ?><tr><td colspan="3">Materiais</td><td class="dir"><?= moeda(d.valores.mat) ?></td></tr><? } ?>
+  <? if (d.valores.mat) { ?><tr><td colspan="3">Materiais<?= d.materialEstimado ? ' (estimativa, valor final conforme a nota fiscal)' : '' ?></td><td class="dir"><?= moeda(d.valores.mat) ?></td></tr><? } ?>
   <tr class="total"><td colspan="3">TOTAL</td><td class="dir"><?= moeda(d.valores.total) ?></td></tr>
 </table>
 
+<? if (d.lista.length) { ?>
+<h2>Lista de materiais<?= d.at.material_modo === 'Pietro' ? ' (comprados pelo Pietro)' : ' (por conta do cliente)' ?></h2>
+<table class="dados">
+  <tr><th>Material</th><th class="centro">Qtd</th><? if (d.at.material_modo !== 'Pietro') { ?><th class="dir">Preço estimado</th><th class="dir">Total estimado</th><? } ?></tr>
+  <? d.lista.forEach(function (m) { ?>
+  <tr><td><?= m.nome ?></td><td class="centro"><?= qtdBR(m.qtd) ?> <?= m.unidade ?></td><? if (d.at.material_modo !== 'Pietro') { ?><td class="dir"><?= moeda(m.preco) ?></td><td class="dir"><?= moeda(num(m.qtd) * num(m.preco)) ?></td><? } ?></tr>
+  <? }); ?>
+  <? if (d.at.material_modo !== 'Pietro') { ?><tr class="total"><td colspan="3">Estimativa (preços médios em <?= d.cfg.cidade || 'Uberaba' ?>)</td><td class="dir"><?= moeda(d.totalLista) ?></td></tr><? } ?>
+</table>
+<? } ?>
+
 <h2>Condições</h2>
 <table class="dados">
-  <tr><td width="30%"><b>Material</b></td><td><?= d.at.material_modo === 'Pietro' ? 'Comprado pelo Pietro e repassado com a nota fiscal.' : 'Por conta do cliente (a lista é enviada antes).' ?></td></tr>
+  <tr><td width="30%"><b>Material</b></td><td><?= d.at.material_modo === 'Pietro' ? 'Comprado pelo Pietro e repassado com a nota fiscal.' : (d.lista.length ? 'Por conta do cliente (lista acima).' : 'Por conta do cliente.') ?></td></tr>
   <tr><td><b>Validade</b></td><td><?= d.cfg.validade_orcamento || 15 ?> dias a partir de <?= dataBR(d.at.data_orcamento) ?></td></tr>
   <tr><td><b>Garantia</b></td><td><?= d.cfg.garantia_dias || 90 ?> dias sobre a mão de obra</td></tr>
   <tr><td><b>Pagamento</b></td><td>Pix, dinheiro ou cartão<? if (d.cfg.chave_pix) { ?> · Chave Pix: <?= d.cfg.chave_pix ?><? } ?></td></tr>

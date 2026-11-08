@@ -2,6 +2,7 @@
 
 ```
 index.html, style.css, app.js, manifest.json   → telas do app (GitHub Pages)
+materiais.js                                    → lista de materiais por serviço + preços estimados (Uberaba)
 assets/                                         → foto e ícones do cartão de visita
 apps-script/Code.gs                             → backend (regras, login, fotos, PDFs)
 apps-script/Logo.gs                             → foto do Pietro para os PDFs
