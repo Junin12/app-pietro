@@ -61,7 +61,8 @@ const enderecoCompleto = c => c ? [c.endereco, c.bairro, c.cidade].filter(Boolea
 const itensDe = a => { try { return JSON.parse(a.itens_json || '[]'); } catch { return []; } };
 const checkDe = a => { try { return JSON.parse(a.checklist_json || '{}'); } catch { return {}; } };
 const listaDe = a => { try { const l = JSON.parse(a.lista_materiais_json || '[]'); return Array.isArray(l) ? l : []; } catch { return []; } };
-const totalLista = l => r2(l.reduce((t, m) => t + num(m.qtd) * num(m.preco), 0));
+const precoMat = m => m.preco === '' || m.preco == null ? num(m.ref) : num(m.preco); // em branco: usa a referência
+const totalLista = l => r2(l.reduce((t, m) => t + num(m.qtd) * precoMat(m), 0));
 const PLURAL = { 'galão': 'galões', barra: 'barras', lata: 'latas', saco: 'sacos', folha: 'folhas', par: 'pares', kit: 'kits' };
 const qtdMat = m => num(m.qtd) !== 1 && PLURAL[m.unidade] ? `${qtdBR(m.qtd)} ${PLURAL[m.unidade]}` : m.unidade === 'un' ? qtdBR(m.qtd) + 'x' : `${qtdBR(m.qtd)} ${m.unidade}`;
 // Margem do orçamento: a que o Pietro escolheu nele ou, se não escolheu, a padrão dos Ajustes
@@ -429,10 +430,14 @@ function tServicoForm(id) {
 
 /* ============================== ORÇAMENTO ============================== */
 
-const UI_RASC = { cat: '', buscaServ: '', voltar: false, buscaCli: '' }; // campos só da tela, não vão para a planilha
+const UI_RASC = { buscaServ: '', buscaMat: '', voltar: false, buscaCli: '' }; // campos só da tela, não vão para a planilha
 
 function novoRasc(at) {
-  if (at) return { ...at, itens: itensDe(at), lista: listaDe(at), margem_material: margemDe(at), ...UI_RASC };
+  if (at) {
+    const itens = itensDe(at).map(i => { const s = S.servicos.find(x => x.id === i.servico_id); return { ...i, ref: s ? num(s.preco) : 0 }; });
+    const lista = listaDe(at).map(m => ({ ...m, ref: refMaterial(m.nome) }));
+    return { ...at, itens, lista, margem_material: margemDe(at), ...UI_RASC };
+  }
   return {
     id: '', cliente_id: '', itens: [], lista: [], deslocamento_tipo: 'Cidade', km: 0, valor_deslocamento: num(S.cfg.deslocamento_cidade),
     material_modo: 'Cliente', margem_material: num(S.cfg.margem_material), desconto: 0, observacao: '', status: 'Orçamento', ...UI_RASC
@@ -461,6 +466,38 @@ function calcular(a) {
   return { sub: r2(sub), mao: r2(mao), mat, total: r2(mao + mat), minimo: mao > bruto, estimado: estimado && mat > 0, lista: totalLista(lista) };
 }
 
+/* ---------- Catálogos que aprendem sozinhos ---------- */
+
+const chaveNome = s => semAcento(s).replace(/\s+/g, ' ').trim();
+const vazio = v => v === '' || v == null;
+
+// Busca por palavras: "troca telha" acha "Troca de telhas quebradas"
+function buscar(lista, texto, nomeDe) {
+  const t = chaveNome(texto);
+  if (!t) return [];
+  const palavras = t.split(' ');
+  return lista.filter(x => { const n = chaveNome(nomeDe(x)); return palavras.every(p => n.includes(p)); })
+    .sort((a, b) => chaveNome(nomeDe(a)).indexOf(palavras[0]) - chaveNome(nomeDe(b)).indexOf(palavras[0]));
+}
+
+// Materiais conhecidos: a lista base (materiais.js) + tudo que o Pietro já digitou nos orçamentos e na execução.
+// O preço de referência é o último que ele usou. Material novo digitado no orçamento entra aqui sozinho ao salvar.
+function catalogoMateriais() {
+  const m = new Map();
+  const por = (nome, unidade, preco) => {
+    const k = chaveNome(nome);
+    if (!k) return;
+    const velho = m.get(k);
+    m.set(k, { nome: String(nome).trim(), unidade: unidade || (velho && velho.unidade) || 'un', preco: num(preco) > 0 ? r2(num(preco)) : velho ? velho.preco : 0 });
+  };
+  Object.values(MAT).forEach(([nome, un, preco]) => por(nome, un, preco));
+  ativos(S.materiais).slice().sort((a, b) => String(a.data).localeCompare(b.data)).forEach(x => por(x.descricao, '', x.valor_unitario));
+  S.atendimentos.slice().sort((a, b) => String(a.criado_em).localeCompare(b.criado_em)).forEach(a => listaDe(a).forEach(x => por(x.nome, x.unidade, x.preco)));
+  return [...m.values()];
+}
+const refMaterial = nome => { const x = catalogoMateriais().find(c => chaveNome(c.nome) === chaveNome(nome)); return x ? x.preco : 0; };
+const servicoPorNome = nome => ativos(S.servicos).find(s => chaveNome(s.nome) === chaveNome(nome));
+
 /* ---------- Lista de materiais do orçamento ---------- */
 
 // Serviços escolhidos (sem repetir a desmontagem) e a quantidade de cada um
@@ -475,20 +512,30 @@ function servicosDoRasc() {
   return [...m.values()];
 }
 
+// Sugestões de material para um serviço: a lista base + o que o Pietro já usou nesse serviço em outros orçamentos
 function sugestoes(s) {
-  const regras = MAT_SERVICO[s.nome] || MAT_CATEGORIA[s.categoria] || [];
-  return regras.filter(([k]) => MAT[k]).map(([k, q, escala]) => {
+  const regras = MAT_SERVICO[s.nome] || (s.categoria && MAT_CATEGORIA[s.categoria]) || [];
+  const base = regras.filter(([k]) => MAT[k]).map(([k, q, escala]) => {
     const [nome, unidade, preco] = MAT[k];
     const bruto = escala ? q * Math.max(s.qtd, 1) : q;
     return { servico_id: s.id, nome, unidade, preco, qtd: unidade === 'm' ? Math.ceil(bruto) : Math.max(1, Math.ceil(bruto - 0.001)) };
   });
+  const vistos = new Set(base.map(x => chaveNome(x.nome)));
+  if (!String(s.id).startsWith('item:')) {
+    S.atendimentos.filter(a => a.id !== rasc.id).forEach(a => listaDe(a).filter(x => x.servico_id === s.id).forEach(x => {
+      if (vistos.has(chaveNome(x.nome))) return;
+      vistos.add(chaveNome(x.nome));
+      base.push({ servico_id: s.id, nome: x.nome, unidade: x.unidade || 'un', preco: num(x.preco), qtd: num(x.qtd) || 1 });
+    }));
+  }
+  return base;
 }
 
-// Tira da lista os materiais de serviços removidos e acompanha a quantidade do serviço nos itens não editados
+// Tira só as sugestões automáticas de serviços removidos (o que o Pietro digitou fica) e acompanha a quantidade do serviço
 function sincronizarLista() {
   const servs = servicosDoRasc();
   const ids = new Set(servs.map(s => s.id));
-  rasc.lista = rasc.lista.filter(m => ids.has(m.servico_id));
+  rasc.lista = rasc.lista.filter(m => !m.auto || ids.has(m.servico_id));
   rasc.lista.forEach(m => {
     if (!m.auto) return;
     const s = servs.find(x => x.id === m.servico_id);
@@ -507,15 +554,15 @@ function tOrcamento(id) {
   sincronizarLista();
   const c = cli(rasc.cliente_id);
   const v = calcular(rasc);
-  const servsEscolhidos = servicosDoRasc();
+  const todos = $('#todos-serv');
+  const aberto = todos ? todos.open : false;
   const rolagem = $('#lista-serv') ? $('#lista-serv').scrollTop : 0; // mantém a lista no mesmo lugar ao adicionar
   depois.push(() => { const l = $('#lista-serv'); if (l) l.scrollTop = rolagem; });
-  const catsComServico = CATEGORIAS.filter(cat => ativos(S.servicos).some(s => s.categoria === cat));
   const padrao = num(S.cfg.margem_material);
   return html`${topo(rasc.id ? 'Editar orçamento nº ' + n4(rasc.numero) : 'Novo orçamento', rasc.id ? '#at/' + rasc.id : '#inicio')}
     ${rasc.id ? '' : html`<a class="link" href="#atendimentos/Orçamento">📋 Ver orçamentos já enviados</a>`}
 
-    <h2>1. Cliente</h2>
+    <h2>1. Para quem?</h2>
     ${c ? html`<div class="cartao escolhido"><div><b>${nomeCompleto(c)}</b><small>${telBR(c.telefone)} · ${c.bairro || c.endereco}</small></div>
         <button class="botao pequeno" data-acao="trocarCliente">Trocar</button></div>`
       : html`<label class="sr" for="busca-orc">Buscar cliente</label>
@@ -523,32 +570,22 @@ function tOrcamento(id) {
         <div id="cli-orc">${listaClientes(rasc.buscaCli, true)}</div>
         <button class="botao" data-acao="cadastrarNoOrc">+ Cadastrar cliente novo</button>`}
 
-    <h2>2. Serviços</h2>
-    <label class="sr" for="busca-serv">Buscar serviço</label>
-    <input id="busca-serv" type="search" placeholder="🔎 Buscar serviço pelo nome" data-on="buscaServ" autocomplete="off" value="${rasc.buscaServ}">
-    <div class="cats" role="group" aria-label="Filtrar serviços por categoria">
-      ${[['', '📋', 'Todos'], ...catsComServico.map(cat => [cat, ICONE_CAT[cat], cat])].map(([val, ico, txt]) =>
-        html`<button class="cat ${rasc.cat === val ? 'ativo' : ''}" data-acao="categoria" data-cat="${val}" aria-pressed="${rasc.cat === val}">${ico} ${txt}</button>`)}
-    </div>
-    <div class="lista-serv" id="lista-serv">${listaServicos()}</div>
+    <h2>2. O que vai fazer?</h2>
+    <p class="dica">Escreva o serviço. Se já existir, ele aparece embaixo para tocar. Se for novo, toque em <b>Adicionar</b>: ele fica guardado para os próximos orçamentos.</p>
+    <form class="busca-add" data-form="addServTexto" autocomplete="off">
+      <label class="sr" for="busca-serv">Serviço</label>
+      <input id="busca-serv" name="texto" type="search" maxlength="120" placeholder="Ex.: troca de telha, chuveiro…" data-on="buscaServ" value="${rasc.buscaServ}" enterkeyhint="done">
+      <button class="botao pequeno">+ Adicionar</button>
+    </form>
+    <div id="res-serv">${resultadosServ()}</div>
+    ${rasc.itens.map(itemEscolhido)}
+    <details class="grupo" id="todos-serv" ${aberto ? 'open' : ''}><summary>📋 Ver todos os serviços cadastrados</summary>
+      <div class="lista-serv" id="lista-serv">${listaServicos()}</div></details>
 
-    <h2>Escolhidos (${rasc.itens.length})</h2>
-    ${rasc.itens.length ? rasc.itens.map(itemEscolhido) : html`<p class="vazio">Toque nos serviços acima para adicionar.</p>`}
-
-    <h2>3. Deslocamento</h2>
-    <div class="opcoes">
-      <button class="opcao ${rasc.deslocamento_tipo === 'Cidade' ? 'ativo' : ''}" data-acao="desloc" data-tipo="Cidade">🏙️ Em ${S.cfg.cidade || 'Uberaba'}<small>${moeda(S.cfg.deslocamento_cidade)}</small></button>
-      <button class="opcao ${rasc.deslocamento_tipo === 'Fora' ? 'ativo' : ''}" data-acao="desloc" data-tipo="Fora">🛣️ Fora da cidade<small>${moeda(S.cfg.valor_km)} por km</small></button>
-    </div>
-    ${rasc.deslocamento_tipo === 'Fora' ? html`<label for="o-km">Distância em km (ida e volta)</label>
-      <input id="o-km" type="number" inputmode="decimal" min="0" step="1" value="${rasc.km || ''}" data-on="km">` : ''}
-    <label for="v-desloc">Valor do deslocamento (R$)</label>
-    <input id="v-desloc" type="number" inputmode="decimal" min="0" step="0.01" value="${rasc.valor_deslocamento}" data-on="campoOrc" data-campo="valor_deslocamento">
-
-    <h2>4. Lista de materiais</h2>
+    <h2>3. Materiais</h2>
     <div class="opcoes">
       <button class="opcao ${rasc.material_modo === 'Cliente' ? 'ativo' : ''}" data-acao="materialModo" data-modo="Cliente">🧾 Cliente compra<small>lista vai no orçamento</small></button>
-      <button class="opcao ${rasc.material_modo === 'Pietro' ? 'ativo' : ''}" data-acao="materialModo" data-modo="Pietro">🛒 Eu compro<small>repasse + ${qtdBR(rasc.margem_material)}%</small></button>
+      <button class="opcao ${rasc.material_modo === 'Pietro' ? 'ativo' : ''}" data-acao="materialModo" data-modo="Pietro">🛒 Eu compro<small>entra no total + ${qtdBR(rasc.margem_material)}%</small></button>
     </div>
     ${rasc.material_modo === 'Pietro' ? html`<div class="margem">
       <label for="o-margem">Quanto cobrar sobre os materiais?</label>
@@ -557,17 +594,32 @@ function tOrcamento(id) {
           html`<button class="cat ${num(rasc.margem_material) === p ? 'ativo' : ''}" data-acao="margem" data-v="${p}">${qtdBR(p)}%${p === padrao ? ' (padrão)' : ''}</button>`)}
         <span class="pct"><input id="o-margem" type="number" inputmode="decimal" min="0" max="100" step="0.5" value="${rasc.margem_material}" data-on="margem" aria-label="Outra porcentagem"> %</span>
       </div></div>` : ''}
-    ${servsEscolhidos.length
-      ? html`<p class="dica">Marque ✅ o que vai precisar e ajuste a quantidade. Preços: média estimada em Uberaba/MG (dá para mudar).</p>
-        ${servsEscolhidos.map(blocoMateriais)}`
-      : html`<p class="vazio">Escolha os serviços (passo 2) para montar a lista de materiais.</p>`}
+    <p class="dica">Escreva cada material (ex.: telha, cimento, cabo 4 mm). O que você já usou antes aparece com o último preço. Material novo fica guardado sozinho.</p>
+    <form class="busca-add" data-form="addMatTexto" autocomplete="off">
+      <label class="sr" for="busca-mat">Material</label>
+      <input id="busca-mat" name="texto" type="search" maxlength="100" placeholder="Ex.: telha francesa" data-on="buscaMat" value="${rasc.buscaMat}" enterkeyhint="done">
+      <button class="botao pequeno">+ Adicionar</button>
+    </form>
+    <div id="res-mat">${resultadosMat()}</div>
+    ${chipsSugestoes()}
+    ${rasc.lista.map(linhaMaterial)}
     <div id="mat-resumo">${resumoMateriais(v)}</div>
+
+    <h2>4. Deslocamento</h2>
+    <div class="opcoes">
+      <button class="opcao ${rasc.deslocamento_tipo === 'Cidade' ? 'ativo' : ''}" data-acao="desloc" data-tipo="Cidade">🏙️ Em ${S.cfg.cidade || 'Uberaba'}<small>${moeda(S.cfg.deslocamento_cidade)}</small></button>
+      <button class="opcao ${rasc.deslocamento_tipo === 'Fora' ? 'ativo' : ''}" data-acao="desloc" data-tipo="Fora">🛣️ Fora da cidade<small>${moeda(S.cfg.valor_km)} por km</small></button>
+    </div>
+    ${rasc.deslocamento_tipo === 'Fora' ? html`<label for="o-km">Distância em km (ida e volta)</label>
+      <input id="o-km" type="number" inputmode="decimal" min="0" step="1" value="${rasc.km || ''}" data-on="km">` : ''}
+    <label for="v-desloc">Valor do deslocamento (R$) — pode mudar, ou deixar 0</label>
+    <input id="v-desloc" type="number" inputmode="decimal" min="0" step="0.01" value="${rasc.valor_deslocamento}" data-on="campoOrc" data-campo="valor_deslocamento">
 
     <h2>5. Desconto e observação</h2>
     <label for="o-desc">Desconto (R$)</label>
     <input id="o-desc" type="number" inputmode="decimal" min="0" step="0.01" value="${rasc.desconto || ''}" data-on="campoOrc" data-campo="desconto">
     <label for="o-obs">Observação para o cliente (opcional)</label>
-    <textarea id="o-obs" maxlength="500" data-on="campoOrc" data-campo="observacao">${rasc.observacao || ''}</textarea>
+    <textarea id="o-obs" maxlength="500" data-on="campoOrc" data-campo="observacao" placeholder="Ex.: prazo de 2 dias. (Os materiais vão na lista do passo 3.)">${rasc.observacao || ''}</textarea>
 
     <div class="acoes2">
       <button class="botao" data-acao="salvarOrc">💾 Só salvar</button>
@@ -581,83 +633,101 @@ function tOrcamento(id) {
     </footer>`;
 }
 
-// Lista de serviços que rola: filtrada pela categoria escolhida ou pela busca (a busca procura em todas)
+// O que aparece embaixo do campo enquanto ele escreve o serviço
+function resultadosServ() {
+  const texto = String(rasc.buscaServ || '').trim();
+  if (!texto) return '';
+  const achados = buscar(ativos(S.servicos), texto, s => s.nome).slice(0, 8);
+  const exato = servicoPorNome(texto);
+  return html`<div class="resultados">${achados.map(linhaServ)}
+    ${exato ? '' : html`<button class="serv-linha novo" data-acao="addServNovo">
+      <span class="nome">Adicionar “${texto}”<small>serviço novo · você digita o preço</small></span><span class="add" aria-hidden="true">+</span></button>`}</div>`;
+}
+
+function linhaServ(s) {
+  const q = rasc.itens.filter(i => i.servico_id === s.id && !i.desmontagem).reduce((tt, i) => tt + num(i.qtd), 0);
+  return html`<button class="serv-linha ${q ? 'marcado' : ''}" data-acao="addServ" data-id="${s.id}" aria-label="Adicionar ${s.nome}">
+    <span class="nome">${s.nome}<small>sugerido ${moeda(s.preco)} por ${s.unidade || 'un'}</small></span>
+    <span class="add" aria-hidden="true">${q ? '✓ ' + qtdBR(q) : '+'}</span></button>`;
+}
+
+// Todos os serviços, por categoria, dentro do "Ver todos"
 function listaServicos() {
-  const t = semAcento(rasc.buscaServ).trim();
   const todos = ativos(S.servicos);
-  const lista = t ? todos.filter(s => semAcento(s.nome).includes(t)) : todos.filter(s => !rasc.cat || s.categoria === rasc.cat);
-  if (!lista.length) return html`<p class="vazio">Nenhum serviço encontrado.</p>`;
-  const linha = s => {
-    const q = rasc.itens.filter(i => i.servico_id === s.id && !i.desmontagem).reduce((tt, i) => tt + num(i.qtd), 0);
-    return html`<button class="serv-linha ${q ? 'marcado' : ''}" data-acao="addServ" data-id="${s.id}" aria-label="Adicionar ${s.nome}">
-      <span class="nome">${s.nome}<small>${moeda(s.preco)} por ${s.unidade || 'un'}</small></span>
-      <span class="add" aria-hidden="true">${q ? '✓ ' + qtdBR(q) : '+'}</span></button>`;
-  };
-  if (rasc.cat && !t) return lista.map(linha);
-  return CATEGORIAS.map(cat => {
-    const doCat = lista.filter(s => s.categoria === cat);
-    return doCat.length ? html`<p class="grupo-titulo">${ICONE_CAT[cat]} ${cat}</p>${doCat.map(linha)}` : '';
-  });
+  if (!todos.length) return html`<p class="vazio">Nenhum serviço cadastrado.</p>`;
+  const outros = todos.filter(s => !CATEGORIAS.includes(s.categoria));
+  return [...CATEGORIAS.map(cat => [cat, todos.filter(s => s.categoria === cat)]), ['Outros', outros]].map(([cat, doCat]) =>
+    doCat.length ? html`<p class="grupo-titulo">${ICONE_CAT[cat] || '🧰'} ${cat}</p>${doCat.map(linhaServ)}` : '');
+}
+
+// Preço: a sugestão fica em cima, só como referência; o campo branco começa vazio para ele digitar o valor dele
+function campoPreco(valorAtual, ref, attrs, rotulo) {
+  return html`<div class="preco-bloco">
+    ${ref ? html`<button type="button" class="ref" ${attrs.usar}>Sugerido: <b>${moeda(ref)}</b> · tocar para usar</button>`
+      : html`<span class="ref">Digite o seu preço</span>`}
+    <label class="preco">R$ <input type="number" inputmode="decimal" min="0" step="0.01" placeholder="0,00" value="${vazio(valorAtual) ? '' : valorAtual}" ${attrs.campo} aria-label="${rotulo}"></label>
+  </div>`;
 }
 
 function itemEscolhido(i, k) {
   return html`<div class="escolhido-item">
-    <div class="nome"><b>${i.nome}</b><button class="x" data-acao="tirarItem" data-k="${k}" aria-label="Remover ${i.nome}">✕</button></div>
+    <div class="nome"><label class="sr" for="it-${k}">Nome do serviço</label>
+      <input id="it-${k}" class="campo-nome" maxlength="140" value="${i.nome}" data-on="itemCampo" data-k="${k}" data-campo="nome">
+      <button class="x" data-acao="tirarItem" data-k="${k}" aria-label="Remover ${i.nome}">✕</button></div>
     <div class="linha">
       <div class="qtd-ctrl">
         <button data-acao="qtd" data-k="${k}" data-d="-1" aria-label="Diminuir quantidade">−</button>
         <input type="number" inputmode="decimal" min="0" step="any" value="${i.qtd}" data-on="itemCampo" data-muda="renderOrc" data-k="${k}" data-campo="qtd" aria-label="Quantidade de ${i.nome}">
         <button data-acao="qtd" data-k="${k}" data-d="1" aria-label="Aumentar quantidade">+</button>
       </div>
-      <span>${i.unidade || 'un'} ×</span>
-      <label class="preco">R$ <input type="number" inputmode="decimal" min="0" step="0.01" value="${i.preco}" data-on="itemCampo" data-k="${k}" data-campo="preco" aria-label="Preço de ${i.nome}"></label>
+      <span>${i.unidade || 'un'}</span>
+      ${campoPreco(i.preco, i.ref, { usar: html`data-acao="usarRef" data-k="${k}"`, campo: html`data-on="itemCampo" data-k="${k}" data-campo="preco"` }, 'Preço de ' + i.nome)}
     </div>
+    ${i.novo ? html`<small>🆕 Serviço novo: vai ficar guardado na sua lista de serviços.</small>` : ''}
     ${i.categoria === 'Montagem' && !i.desmontagem && !rasc.itens.some(x => x.desmontagem && x.servico_id === i.servico_id)
       ? html`<button class="link" data-acao="desmontagem" data-k="${k}">+ desmontagem também (${Math.round(MARGEM_DESMONTAGEM * 100)}% do valor)</button>` : ''}
   </div>`;
 }
 
-// Um bloco por serviço: materiais sugeridos com ✅, quantidade e preço, e um campo para incluir outro
-function blocoMateriais(s, b) {
-  const sug = sugestoes(s);
-  const doServ = rasc.lista.filter(m => m.servico_id === s.id);
-  const linhas = [
-    ...sug.map(x => { const i = rasc.lista.findIndex(m => m.servico_id === s.id && m.nome === x.nome); return i >= 0 ? { i } : { sug: x }; }),
-    ...doServ.filter(m => !sug.some(x => x.nome === m.nome)).map(m => ({ i: rasc.lista.indexOf(m) }))
-  ];
-  return html`<details class="mat-bloco" open>
-    <summary><span>🔧 ${s.nome}</span><small id="mb-${b}">${resumoBloco(doServ)}</small></summary>
-    ${linhas.map(l => l.sug ? html`<div class="mat-linha">
-        <label class="mat-check"><input type="checkbox" data-muda="matMarcar" data-s="${s.id}" data-n="${l.sug.nome}">
-          <span>${l.sug.nome}<small>sugestão: ${qtdBR(l.sug.qtd)} ${l.sug.unidade} · ~${moeda(l.sug.preco)} cada</small></span></label></div>`
-      : linhaMaterial(rasc.lista[l.i], l.i, b))}
-    <form class="mat-outro" data-form="matOutro">
-      <input type="hidden" name="servico_id" value="${s.id}">
-      <label class="sr" for="mo-${b}">Outro material para ${s.nome}</label>
-      <input id="mo-${b}" name="nome" required maxlength="100" placeholder="✏️ Outro material que não está na lista" autocomplete="off">
-      <div class="mat-outro-linha">
-        <label>Qtd <input name="qtd" type="number" inputmode="decimal" min="0.01" step="any" value="1" required></label>
-        <label>R$ cada <input name="preco" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0,00"></label>
-        <button class="botao pequeno">+ Incluir</button>
-      </div>
-    </form>
-  </details>`;
+// O que aparece embaixo do campo enquanto ele escreve o material
+function resultadosMat() {
+  const texto = String(rasc.buscaMat || '').trim();
+  if (!texto) return '';
+  const cat = catalogoMateriais();
+  const achados = buscar(cat, texto, m => m.nome).slice(0, 8);
+  const exato = cat.find(m => chaveNome(m.nome) === chaveNome(texto));
+  return html`<div class="resultados">${achados.map(m => html`<button class="serv-linha" data-acao="addMat" data-n="${m.nome}">
+      <span class="nome">${m.nome}<small>${m.preco ? 'último preço ' + moeda(m.preco) + ' por ' + m.unidade : m.unidade}</small></span><span class="add" aria-hidden="true">+</span></button>`)}
+    ${exato ? '' : html`<button class="serv-linha novo" data-acao="addMatNovo">
+      <span class="nome">Adicionar “${texto}”<small>material novo · fica guardado</small></span><span class="add" aria-hidden="true">+</span></button>`}</div>`;
 }
 
-const resumoBloco = l => l.length ? `${l.length} marcado(s) · ${moeda(totalLista(l))}` : 'nada marcado';
+// Sugestões dos serviços escolhidos que ainda não estão na lista: um toque e entra
+function chipsSugestoes() {
+  const ja = new Set(rasc.lista.map(m => chaveNome(m.nome)));
+  const chips = [];
+  servicosDoRasc().forEach(s => sugestoes(s).forEach(x => {
+    if (ja.has(chaveNome(x.nome))) return;
+    ja.add(chaveNome(x.nome));
+    chips.push(html`<button class="chip-sug" data-acao="addSug" data-s="${s.id}" data-n="${x.nome}">+ ${x.nome} <small>${qtdMat(x)}</small></button>`);
+  }));
+  return chips.length ? html`<p class="dica">💡 Sugestões (toque para incluir):</p><div class="chips-sug">${chips.slice(0, 10)}</div>` : '';
+}
 
-function linhaMaterial(m, i, b) {
-  return html`<div class="mat-linha marcado">
-    <label class="mat-check"><input type="checkbox" checked data-muda="matDesmarcar" data-i="${i}"><span>${m.nome}</span></label>
-    <div class="mat-valores">
+function linhaMaterial(m, i) {
+  return html`<div class="escolhido-item mat">
+    <div class="nome"><label class="sr" for="mn-${i}">Nome do material</label>
+      <input id="mn-${i}" class="campo-nome" maxlength="100" value="${m.nome}" data-on="matCampo" data-campo="nome" data-i="${i}">
+      <button class="x" data-acao="tirarMat" data-i="${i}" aria-label="Tirar ${m.nome}">✕</button></div>
+    <div class="linha">
       <div class="qtd-ctrl mini">
         <button data-acao="matQtd" data-i="${i}" data-d="-1" aria-label="Diminuir quantidade de ${m.nome}">−</button>
-        <input type="number" inputmode="decimal" min="0" step="any" value="${m.qtd}" data-on="matCampo" data-campo="qtd" data-i="${i}" data-b="${b}" aria-label="Quantidade de ${m.nome}">
+        <input type="number" inputmode="decimal" min="0" step="any" value="${m.qtd}" data-on="matCampo" data-campo="qtd" data-i="${i}" aria-label="Quantidade de ${m.nome}">
         <button data-acao="matQtd" data-i="${i}" data-d="1" aria-label="Aumentar quantidade de ${m.nome}">+</button>
       </div>
-      <span class="un">${m.unidade} ×</span>
-      <label class="preco">R$ <input type="number" inputmode="decimal" min="0" step="0.01" value="${m.preco}" data-on="matCampo" data-campo="preco" data-i="${i}" data-b="${b}" aria-label="Preço de ${m.nome}"></label>
-      <b class="mat-total" id="mt-${i}">${moeda(num(m.qtd) * num(m.preco))}</b>
+      <input class="un-campo" maxlength="20" value="${m.unidade}" data-on="matCampo" data-campo="unidade" data-i="${i}" aria-label="Unidade de ${m.nome} (un, m, saco…)">
+      ${campoPreco(m.preco, m.ref, { usar: html`data-acao="usarRefMat" data-i="${i}"`, campo: html`data-on="matCampo" data-campo="preco" data-i="${i}"` }, 'Preço de cada ' + m.nome)}
+      <b class="mat-total" id="mt-${i}">${moeda(num(m.qtd) * precoMat(m))}</b>
     </div></div>`;
 }
 
@@ -674,7 +744,7 @@ function resumoMateriais(v) {
 function detalheTotal(v) {
   const partes = [];
   if (v.mat) partes.push(`Mão de obra ${moeda(v.mao)} + materiais ${moeda(v.mat)}${v.estimado ? ' (estimativa)' : ''}`);
-  if (v.minimo) partes.push(`Aplicado o valor mínimo do atendimento (${moeda(S.cfg.valor_minimo)})`);
+  if (v.minimo) partes.push(`Aplicado o valor mínimo do atendimento (${moeda(S.cfg.valor_minimo)}) — dá para mudar em Ajustes`);
   return partes.join(' · ');
 }
 
@@ -685,13 +755,69 @@ function atualizarTotal() {
   pintar('#mat-resumo', resumoMateriais(v));
 }
 
+// Item de serviço a partir do cadastro (preço em branco: a sugestão fica só como referência)
+const itemDoServico = s => ({ servico_id: s.id, nome: s.nome, categoria: s.categoria, unidade: s.unidade || 'un', qtd: 1, preco: '', ref: num(s.preco) });
+
+function adicionarServico(s) {
+  const ja = rasc.itens.find(i => i.servico_id === s.id && !i.desmontagem);
+  if (ja) ja.qtd = r2(num(ja.qtd) + 1);
+  else rasc.itens.push(itemDoServico(s));
+  rasc.buscaServ = '';
+  render();
+  aviso(`${s.nome} adicionado. Agora digite o preço.`);
+}
+
+function adicionarServicoNovo(nome) {
+  nome = String(nome || '').trim().replace(/\s+/g, ' ');
+  if (!nome) throw new Error('Escreva o nome do serviço.');
+  const s = servicoPorNome(nome);
+  if (s) return adicionarServico(s);
+  rasc.itens.push({ servico_id: '', nome: nome.charAt(0).toUpperCase() + nome.slice(1), categoria: '', unidade: 'un', qtd: 1, preco: '', ref: 0, novo: true });
+  rasc.buscaServ = '';
+  render();
+  aviso('Serviço novo adicionado. Digite o preço.');
+}
+
+function adicionarMaterial(nome, focar) {
+  nome = String(nome || '').trim().replace(/\s+/g, ' ');
+  if (!nome) throw new Error('Escreva o nome do material.');
+  const ja = rasc.lista.find(m => chaveNome(m.nome) === chaveNome(nome));
+  if (ja) { ja.qtd = r2(num(ja.qtd) + 1); ja.auto = false; }
+  else {
+    const c = catalogoMateriais().find(m => chaveNome(m.nome) === chaveNome(nome));
+    rasc.lista.push({ servico_id: '', nome: c ? c.nome : nome.charAt(0).toUpperCase() + nome.slice(1), unidade: c ? c.unidade : 'un', qtd: 1, preco: '', ref: c ? c.preco : 0, auto: false });
+  }
+  rasc.buscaMat = '';
+  render();
+  if (focar) depois.push(() => { const el = $('#busca-mat'); if (el) el.focus(); });
+  aviso(`${nome} na lista`);
+}
+
+// Serviço digitado no orçamento que não existe no cadastro: guarda para os próximos
+async function registrarServico(item) {
+  const ja = servicoPorNome(item.nome);
+  if (ja) { item.servico_id = ja.id; item.categoria = ja.categoria; return; }
+  const r = await api('salvar', { aba: 'SERVICOS', registro: { categoria: 'Manutenção', nome: item.nome.slice(0, 120), unidade: item.unidade || 'un', preco: num(item.preco) } }, 'Guardando serviço novo…');
+  item.servico_id = r.resultado.id;
+  item.categoria = 'Manutenção';
+  item.novo = false;
+}
+
 async function salvarOrcamento() {
   if (!rasc.cliente_id) throw new Error('Escolha o cliente (passo 1).');
   if (!rasc.itens.length) throw new Error('Escolha pelo menos um serviço (passo 2).');
+  rasc.itens.forEach(i => { i.nome = String(i.nome || '').trim(); });
+  if (rasc.itens.some(i => !i.nome)) throw new Error('Tem serviço sem nome. Escreva o nome ou toque no ✕ para tirar.');
   if (rasc.itens.some(i => num(i.qtd) <= 0)) throw new Error('Confira as quantidades dos serviços.');
+  const semPreco = rasc.itens.filter(i => vazio(i.preco));
+  if (semPreco.length) throw new Error('Digite o preço de: ' + semPreco.map(i => i.nome).join(', ') + '. (O sugerido é só referência.)');
+  for (const i of rasc.itens.filter(x => !x.servico_id && !x.desmontagem)) await registrarServico(i);
   const resto = Object.fromEntries(Object.entries(rasc).filter(([k]) => !(k in UI_RASC) && !['itens', 'lista'].includes(k)));
-  const lista = rasc.lista.map(({ servico_id, nome, unidade, qtd, preco }) => ({ servico_id, nome, unidade, qtd, preco }));
-  const r = await api('salvar_atendimento', { registro: { ...resto, itens_json: rasc.itens, lista_materiais_json: lista } }, 'Salvando orçamento…');
+  const itens = rasc.itens.map(({ ref, novo, ...i }) => i);
+  const lista = rasc.lista.filter(m => String(m.nome || '').trim()).map(m => ({
+    servico_id: String(m.servico_id || '').startsWith('item:') ? '' : m.servico_id || '', nome: String(m.nome).trim(), unidade: m.unidade || 'un', qtd: m.qtd, preco: precoMat(m)
+  }));
+  const r = await api('salvar_atendimento', { registro: { ...resto, itens_json: itens, lista_materiais_json: lista } }, 'Salvando orçamento…');
   gravarLocal('exec_' + r.resultado.id, null); // a lista de serviços mudou: descarta anotações antigas
   if (exec && exec.id === r.resultado.id) exec = null;
   rasc = null;
@@ -718,7 +844,7 @@ function mensagemOrcamento(at) {
   const pietro = at.material_modo === 'Pietro';
   if (lista.length) {
     L.push('', pietro ? '🛒 *Materiais que eu compro*' : '🧾 *Lista de materiais (por sua conta)*',
-      ...lista.map(m => `• ${qtdMat(m)} ${m.nome}` + (pietro ? '' : ` – ~${moeda(num(m.qtd) * num(m.preco))}`)));
+      ...lista.map(m => `• ${qtdMat(m)} ${m.nome}` + (pietro || !num(m.preco) ? '' : ` – ~${moeda(num(m.qtd) * num(m.preco))}`)));
     if (!pietro) L.push(`Estimativa em ${cfg.cidade || 'Uberaba'}: ~${moeda(totalLista(lista))}`);
   }
   L.push('', `🧱 Material: ${pietro ? 'eu compro e repasso com a nota fiscal' + (v.estimado ? ' (valor final conforme a nota)' : '') : 'por conta do cliente' + (lista.length ? ' (lista acima)' : '')}`);
@@ -744,9 +870,18 @@ function mensagemCobranca(at) {
     (S.cfg.chave_pix ? `\n💳 Chave Pix: ${S.cfg.chave_pix}` : '') + `\nMuito obrigado!\nPietro · Pietro Resolve 🛠️`;
 }
 
+// Enviar: para o cliente salvo, para outro contato (o WhatsApp abre a lista de contatos) ou para um número digitado
+let msgWhats = '';
 function dialogoWhats(titulo, texto, c, mensagem) {
+  msgWhats = mensagem;
   abrirDialogo(html`<h2>${titulo}</h2><p>${texto}</p>
-    <a class="botao principal" href="${waLink(c.telefone, mensagem)}" target="_blank" rel="noopener">💬 Abrir WhatsApp de ${c.nome}</a>
+    ${c && c.telefone ? html`<a class="botao principal" href="${waLink(c.telefone, mensagem)}" target="_blank" rel="noopener">💬 Enviar para ${c.nome}<small>${telBR(c.telefone)}</small></a>` : ''}
+    <a class="botao" href="${'https://wa.me/?text=' + encodeURIComponent(mensagem)}" target="_blank" rel="noopener">👥 Escolher outro contato no WhatsApp</a>
+    <form class="whats-numero" data-form="whatsNumero">
+      <label for="w-num">Ou digite outro número</label>
+      <div class="linha-num"><input id="w-num" name="tel" type="tel" inputmode="numeric" required pattern="${PADRAO_TEL}" maxlength="15"
+        placeholder="(34) 99999-9999" title="DDD + número" data-on="mascaraTel"><button class="botao pequeno">Enviar</button></div>
+    </form>
     <button class="botao" data-acao="fechar">Fechar</button>`);
 }
 
@@ -824,7 +959,7 @@ function acoesAt(a, c) {
     case 'Concluído': return html`
       ${a.pagamento !== 'Pago'
         ? html`<button class="botao principal" data-acao="pagar" data-id="${a.id}">💰 Registrar pagamento</button>
-          ${c ? html`<a class="botao" href="${waLink(c.telefone, mensagemCobranca(a))}" target="_blank" rel="noopener">💬 Lembrar o cliente do pagamento</a>` : ''}`
+          <button class="botao" data-acao="whatsCobranca" data-id="${a.id}">💬 Lembrar o cliente do pagamento</button>`
         : html`<button class="botao" data-acao="estornar" data-id="${a.id}">↩️ Desfazer pagamento</button>`}
       <a class="botao" href="#exec/${a.id}">📷 Ver fotos e anotações</a>`;
     default: return '';
@@ -1304,15 +1439,19 @@ const ACOES = {
 
   // Orçamento
   novoOrcamento: d => { rasc = novoRasc(); rasc.cliente_id = d.cliente; ir('#orcamento'); },
-  categoria: d => { rasc.cat = d.cat; rasc.buscaServ = ''; render(); const l = $('#lista-serv'); if (l) l.scrollTop = 0; },
-  addServ: d => {
-    const s = S.servicos.find(x => x.id === d.id);
-    const ja = rasc.itens.find(i => i.servico_id === s.id && !i.desmontagem);
-    if (ja) ja.qtd = r2(num(ja.qtd) + 1);
-    else rasc.itens.push({ servico_id: s.id, nome: s.nome, categoria: s.categoria, unidade: s.unidade || 'un', qtd: 1, preco: num(s.preco) });
+  addServ: d => adicionarServico(S.servicos.find(x => x.id === d.id)),
+  addServNovo: () => adicionarServicoNovo(rasc.buscaServ),
+  usarRef: d => { const i = rasc.itens[d.k]; i.preco = i.ref; render(); },
+  addMat: d => adicionarMaterial(d.n),
+  addMatNovo: () => adicionarMaterial(rasc.buscaMat),
+  addSug: d => {
+    const s = servicosDoRasc().find(x => x.id === d.s);
+    const sug = s && sugestoes(s).find(x => x.nome === d.n);
+    if (sug) rasc.lista.push({ ...sug, preco: '', ref: refMaterial(sug.nome) || sug.preco, auto: true });
     render();
-    aviso(`${s.nome} adicionado`);
   },
+  usarRefMat: d => { const m = rasc.lista[d.i]; m.preco = m.ref; m.auto = false; render(); },
+  tirarMat: d => { rasc.lista.splice(d.i, 1); render(); },
   qtd: d => {
     const i = rasc.itens[d.k];
     i.qtd = r2(num(i.qtd) + Number(d.d));
@@ -1345,13 +1484,14 @@ const ACOES = {
   enviarOrc: async () => {
     const at = await salvarOrcamento();
     ir('#at/' + at.id);
-    dialogoWhats(`Orçamento nº ${n4(at.numero)} salvo ✅`, 'Toque abaixo para abrir o WhatsApp com a mensagem pronta.', cli(at.cliente_id), mensagemOrcamento(at));
+    dialogoWhats(`Orçamento nº ${n4(at.numero)} salvo ✅`, 'A mensagem já vai pronta. Escolha para quem enviar:', cli(at.cliente_id), mensagemOrcamento(at));
   },
   salvarOrc: async () => { const at = await salvarOrcamento(); aviso('Orçamento salvo!'); ir('#at/' + at.id); },
   pdfOrc: async () => { const at = await salvarOrcamento(); ir('#at/' + at.id); await ACOES.gerarDoc({ id: at.id, tipo: 'Orçamento' }); },
 
   // Atendimento
-  whatsOrc: d => { const a = atd(d.id); dialogoWhats('Reenviar orçamento', 'A mensagem já vai pronta.', cli(a.cliente_id), mensagemOrcamento(a)); },
+  whatsOrc: d => { const a = atd(d.id); dialogoWhats('Enviar orçamento', 'A mensagem já vai pronta. Escolha para quem enviar:', cli(a.cliente_id), mensagemOrcamento(a)); },
+  whatsCobranca: d => { const a = atd(d.id); dialogoWhats('Lembrar do pagamento', 'Escolha para quem enviar:', cli(a.cliente_id), mensagemCobranca(a)); },
   aprovar: d => {
     const a = atd(d.id);
     abrirDialogo(html`<form data-form="agendar"><h2>📅 Dia e hora do serviço</h2>
@@ -1449,12 +1589,18 @@ const ACOES = {
   servicoExtra: d => {
     abrirDialogo(html`<form data-form="extra"><h2>+ Serviço extra</h2>
       <input type="hidden" name="id" value="${d.id}">
-      <label for="x-serv">Serviço</label>
-      <select id="x-serv" name="servico" required><option value="">Escolha…</option>
+      <label for="x-serv">Escolha da lista…</label>
+      <select id="x-serv" name="servico"><option value="">Escolha…</option>
         ${CATEGORIAS.map(cat => html`<optgroup label="${cat}">${ativos(S.servicos).filter(s => s.categoria === cat).map(s =>
           html`<option value="${s.id}">${s.nome} (${moeda(s.preco)})</option>`)}</optgroup>`)}</select>
-      <label for="x-qtd">Quantidade</label>
-      <input id="x-qtd" name="qtd" type="number" inputmode="decimal" min="0.01" step="any" value="1" required>
+      <label for="x-novo">…ou escreva o serviço</label>
+      <input id="x-novo" name="novo" maxlength="120" placeholder="Ex.: troca de calha" autocomplete="off">
+      <div class="acoes2">
+        <div><label for="x-qtd">Quantidade</label>
+          <input id="x-qtd" name="qtd" type="number" inputmode="decimal" min="0.01" step="any" value="1" required></div>
+        <div><label for="x-preco">Preço (R$)</label>
+          <input id="x-preco" name="preco" type="number" inputmode="decimal" min="0" step="0.01" placeholder="o seu preço"></div>
+      </div>
       <button class="botao principal">Adicionar</button>
       <button type="button" class="botao" data-acao="fechar">Voltar</button></form>`);
   },
@@ -1546,12 +1692,22 @@ const FORMS = {
       ir('#orcamento' + (rasc.id ? '/' + rasc.id : ''));
     } else ir('#cliente/' + r.resultado.id);
   },
-  matOutro: d => {
-    const nome = String(d.nome || '').trim();
-    if (!nome) throw new Error('Escreva o nome do material.');
-    rasc.lista.push({ servico_id: d.servico_id, nome, unidade: 'un', qtd: num(d.qtd) > 0 ? r2(num(d.qtd)) : 1, preco: r2(num(d.preco)), auto: false });
-    render();
-    aviso(`${nome} incluído na lista`);
+  addServTexto: d => {
+    const texto = String(d.texto || '').trim();
+    if (!texto) throw new Error('Escreva o serviço.');
+    const achados = buscar(ativos(S.servicos), texto, s => s.nome);
+    const s = servicoPorNome(texto) || (achados.length === 1 ? achados[0] : null);
+    return s ? adicionarServico(s) : adicionarServicoNovo(texto);
+  },
+  addMatTexto: d => {
+    const texto = String(d.texto || '').trim();
+    const achados = buscar(catalogoMateriais(), texto, m => m.nome);
+    const exato = achados.find(m => chaveNome(m.nome) === chaveNome(texto));
+    adicionarMaterial(exato ? exato.nome : achados.length === 1 ? achados[0].nome : texto, true);
+  },
+  whatsNumero: d => {
+    window.open(waLink(d.tel, msgWhats), '_blank', 'noopener');
+    fecharDialogo();
   },
   servico: async d => {
     await api('salvar', { aba: 'SERVICOS', registro: d }, 'Salvando serviço…');
@@ -1579,9 +1735,16 @@ const FORMS = {
     render();
   },
   extra: async d => {
-    const s = S.servicos.find(x => x.id === d.servico);
-    if (!s) throw new Error('Escolha o serviço.');
-    exec.itens.push({ servico_id: s.id, nome: s.nome, categoria: s.categoria, unidade: s.unidade || 'un', qtd: num(d.qtd), preco: num(s.preco), feito: true });
+    let s = S.servicos.find(x => x.id === d.servico);
+    const nome = String(d.novo || '').trim();
+    if (!s && !nome) throw new Error('Escolha o serviço da lista ou escreva o nome dele.');
+    if (!s && vazio(d.preco)) throw new Error('Digite o preço do serviço.');
+    if (!s) {
+      const item = { nome, unidade: 'un', preco: num(d.preco) };
+      await registrarServico(item);
+      s = S.servicos.find(x => x.id === item.servico_id) || { id: item.servico_id, nome, categoria: item.categoria, unidade: 'un', preco: item.preco };
+    }
+    exec.itens.push({ servico_id: s.id, nome: s.nome, categoria: s.categoria, unidade: s.unidade || 'un', qtd: num(d.qtd), preco: vazio(d.preco) ? num(s.preco) : num(d.preco), feito: true });
     await salvarExecucao(atd(d.id), 'Adicionando serviço…');
     fecharDialogo();
     aviso('Serviço extra adicionado. O total foi atualizado.');
@@ -1624,7 +1787,8 @@ const FORMS = {
 const AO_DIGITAR = {
   buscaClientes: el => pintar('#lista-clientes', listaClientes(el.value)),
   buscaCliOrc: el => { rasc.buscaCli = el.value; pintar('#cli-orc', listaClientes(el.value, true)); },
-  buscaServ: el => { rasc.buscaServ = el.value; pintar('#lista-serv', listaServicos()); $('#lista-serv').scrollTop = 0; },
+  buscaServ: el => { rasc.buscaServ = el.value; pintar('#res-serv', resultadosServ()); },
+  buscaMat: el => { rasc.buscaMat = el.value; pintar('#res-mat', resultadosMat()); },
   margem: el => {
     rasc.margem_material = Math.min(100, num(el.value));
     $$('.margem .cat').forEach(b => b.classList.toggle('ativo', num(b.dataset.v) === rasc.margem_material));
@@ -1632,17 +1796,21 @@ const AO_DIGITAR = {
   },
   matCampo: el => {
     const m = rasc.lista[el.dataset.i];
-    m[el.dataset.campo] = num(el.value);
+    const c = el.dataset.campo;
+    m[c] = ['nome', 'unidade'].includes(c) ? el.value : el.value === '' ? '' : num(el.value);
     m.auto = false;
-    $('#mt-' + el.dataset.i).textContent = moeda(num(m.qtd) * num(m.preco));
-    $('#mb-' + el.dataset.b).textContent = resumoBloco(rasc.lista.filter(x => x.servico_id === m.servico_id));
+    $('#mt-' + el.dataset.i).textContent = moeda(num(m.qtd) * precoMat(m));
     atualizarTotal();
   },
   mascaraTel: el => {
     const d = el.value.replace(/\D/g, '').slice(0, 11);
     el.value = d.length > 6 ? `(${d.slice(0, 2)}) ${d.slice(2, d.length - 4)}-${d.slice(-4)}` : d.length > 2 ? `(${d.slice(0, 2)}) ${d.slice(2)}` : d;
   },
-  itemCampo: el => { rasc.itens[el.dataset.k][el.dataset.campo] = num(el.value); atualizarTotal(); },
+  itemCampo: el => {
+    const c = el.dataset.campo;
+    rasc.itens[el.dataset.k][c] = c === 'nome' ? el.value : el.value === '' ? '' : num(el.value);
+    atualizarTotal();
+  },
   km: el => {
     rasc.km = num(el.value);
     rasc.valor_deslocamento = r2(rasc.km * num(S.cfg.valor_km));
@@ -1668,13 +1836,6 @@ const AO_MUDAR = {
     await enviarFila();
   },
   renderOrc: () => render(),
-  matMarcar: el => {
-    const s = servicosDoRasc().find(x => x.id === el.dataset.s);
-    const sug = s && sugestoes(s).find(x => x.nome === el.dataset.n);
-    if (sug) rasc.lista.push({ ...sug, auto: true });
-    render();
-  },
-  matDesmarcar: el => { rasc.lista.splice(el.dataset.i, 1); render(); },
   feito: el => { exec.itens[el.dataset.k].feito = el.checked; guardarExec(); },
   check: el => { exec.checklist[el.dataset.k] = el.checked; guardarExec(); },
   dashCampo: el => {

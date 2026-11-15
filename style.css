@@ -369,3 +369,27 @@ dialog h2 { margin-top: 0; }
 
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } .botao:active { transform: none; } }
 @media (max-width: 360px) { body { font-size: 17px; } .resumo, .cards3 { grid-template-columns: 1fr; } }
+
+/* ---------- Orçamento simples: escrever e adicionar ---------- */
+.busca-add { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+.busca-add input { flex: 1; min-width: 0; margin: 0; }
+.busca-add .botao { flex: none; width: auto; margin: 0; min-height: 52px; padding: 0 14px; }
+.resultados { background: var(--branco); border: 2px solid var(--azul); border-radius: 12px; overflow: hidden; margin: 0 0 10px; }
+.serv-linha.novo { background: var(--amarelo-claro); }
+.serv-linha.novo .nome { font-weight: 700; }
+.campo-nome { flex: 1; min-width: 0; margin: 0; min-height: 44px; font-weight: 600; }
+.preco-bloco { flex: 1; min-width: 150px; display: flex; flex-direction: column; gap: 2px; }
+.preco-bloco .preco { min-width: 0; }
+.ref { align-self: flex-start; background: none; border: 0; padding: 2px 0; font: inherit; font-size: .82rem; color: var(--cinza); text-align: left; cursor: pointer; min-height: 24px; }
+button.ref b { color: var(--azul); text-decoration: underline; }
+.un-campo { width: 76px; min-height: 40px; margin: 0; padding: 4px 6px; text-align: center; }
+.escolhido-item.mat { border-color: var(--linha); }
+.chips-sug { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+.chip-sug { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 6px 12px; border: 2px dashed var(--azul); border-radius: 999px; background: var(--branco); color: var(--azul); font: inherit; font-size: .9rem; font-weight: 600; cursor: pointer; }
+.chip-sug small { display: inline; }
+.whats-numero { margin: 10px 0; }
+.whats-numero .linha-num { display: flex; gap: 8px; align-items: center; }
+.whats-numero input { flex: 1; min-width: 0; margin: 0; }
+.whats-numero .botao { width: auto; flex: none; margin: 0; min-height: 52px; }
+dialog .botao.principal small { color: var(--texto); font-weight: 400; }
+dialog .botao.principal { flex-direction: column; gap: 0; }
