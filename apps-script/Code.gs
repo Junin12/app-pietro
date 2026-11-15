@@ -48,12 +48,12 @@ const CONFIG_EDITAVEL = {
 // Regras de validação de cada tabela editável pelo app
 const CAMPOS = {
   CLIENTES: {
-    nome: { obr: 1, max: 60, rot: 'Nome' }, sobrenome: { obr: 1, max: 80, rot: 'Sobrenome' },
-    telefone: { obr: 1, tel: 1, rot: 'Telefone' }, endereco: { obr: 1, max: 200, rot: 'Endereço' },
+    nome: { obr: 1, max: 60, rot: 'Nome' }, sobrenome: { max: 80, rot: 'Sobrenome' },
+    telefone: { obr: 1, tel: 1, rot: 'Telefone' }, endereco: { max: 200, rot: 'Endereço' },
     bairro: { max: 80 }, cidade: { max: 80 }, observacao: { max: 500 }
   },
   SERVICOS: {
-    categoria: { obr: 1, lista: CATEGORIAS, rot: 'Categoria' }, nome: { obr: 1, max: 120, rot: 'Nome do serviço' },
+    categoria: { obr: 1, max: 40, rot: 'Categoria' }, nome: { obr: 1, max: 120, rot: 'Nome do serviço' },
     unidade: { max: 20 }, preco_min: { num: 1 }, preco_max: { num: 1 }, preco: { obr: 1, num: 1, rot: 'Preço' },
     observacao: { max: 300 }, dica_manutencao: { max: 600 }, revisao_meses: { num: 1 }
   },
@@ -444,10 +444,7 @@ function finalizar(d) {
   const at = acharAt_(d.id);
   if (at.status === 'Concluído') throw erro('Este serviço já foi finalizado.');
   if (['Aprovado', 'Em execução'].indexOf(at.status) < 0) throw erro('Só dá para finalizar um serviço aprovado.');
-  const fotos = fotosDo_(at.id);
-  if (!fotos.some(f => f.tipo === 'Antes') || !fotos.some(f => f.tipo === 'Depois')) throw erro('Tire pelo menos uma foto ANTES e uma DEPOIS.');
-  const ck = JSON.parse(at.checklist_json || '{}');
-  if (!CHECKLIST.every(c => ck[c])) throw erro('Marque todo o checklist de qualidade.');
+  // Fotos e checklist são recomendados, não obrigatórios: o app avisa o que falta e o Pietro decide
 
   let atual = atualizar_('ATENDIMENTOS', at.id, {
     status: 'Concluído', data_conclusao: agora(), data_inicio: at.data_inicio || agora(), atualizado_em: agora()

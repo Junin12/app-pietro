@@ -25,6 +25,7 @@
   var durante = d.fotos.filter(function (f) { return f.tipo === 'Durante'; });
   var pares = Math.max(antes.length, depois.length);
 ?>
+<? if (pares) { ?>
 <h2>Registro fotográfico: antes × depois</h2>
 <table class="fotos" width="100%">
   <tr><td><b>ANTES</b></td><td><b>DEPOIS</b></td></tr>
@@ -35,6 +36,7 @@
   </tr>
   <? } ?>
 </table>
+<? } ?>
 
 <? if (durante.length) { ?>
 <h2>Durante a execução</h2>

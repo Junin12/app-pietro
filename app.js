@@ -6,6 +6,8 @@
 const API_URL = 'https://script.google.com/macros/s/AKfycbzc9fE0aCkbdBLGSA5WTsVU0X1jOLCS-O8GcgOcZvhd3qVU77UroS5CU5B-wPfKMH5x/exec';
 
 const CATEGORIAS = ['Elétrica', 'Hidráulica', 'Instalações', 'Montagem', 'Pintura', 'Portas', 'Manutenção', 'Pacotes', 'Taxas'];
+// Categorias: as de sempre + as que o Pietro criar
+const categorias = () => [...new Set([...CATEGORIAS, ...ativos(S.servicos).map(s => s.categoria).filter(Boolean)])];
 const ICONE_CAT = { 'Elétrica': '⚡', 'Hidráulica': '💧', 'Instalações': '🖼️', 'Montagem': '🛏️', 'Pintura': '🎨', 'Portas': '🚪', 'Manutenção': '🏠', 'Pacotes': '📦', 'Taxas': '🧾' };
 const FORMAS = ['Pix', 'Dinheiro', 'Cartão de débito', 'Cartão de crédito', 'Transferência'];
 const CAT_SAIDA = ['Material', 'Combustível', 'Ferramentas', 'Alimentação', 'Celular/Internet', 'MEI/DAS', 'Manutenção do veículo', 'Outros'];
@@ -295,7 +297,7 @@ function tInicio() {
     </div>
     ${proximo ? html`<section class="cartao"><small>Próximo serviço</small>
       <b>📅 ${dataHoraBR(proximo.data_agendada)} · ${nomeCompleto(c)}</b>
-      <p class="pequeno">${resumoItens(proximo)}</p><p class="pequeno">📍 ${enderecoCompleto(c)}</p>
+      <p class="pequeno">${resumoItens(proximo)}</p>${enderecoCompleto(c) ? html`<p class="pequeno">📍 ${enderecoCompleto(c)}</p>` : ""}
       <div class="acoes2"><a class="botao" href="${mapsLink(c)}" target="_blank" rel="noopener">📍 Abrir no mapa</a>
       <a class="botao" href="#exec/${proximo.id}">🔧 Executar</a></div></section>` : ''}
     <nav class="grade" aria-label="Menu principal">${botoes.map(([h, i, t, cls]) =>
@@ -339,13 +341,13 @@ function tClienteForm(id) {
       <p class="dica">Campos com <span class="obrig">*</span> são obrigatórios.</p>
       <label for="c-nome">Nome <span class="obrig">*</span></label>
       <input id="c-nome" name="nome" required maxlength="60" autocapitalize="words" autocomplete="off" value="${c.nome || ''}">
-      <label for="c-sobre">Sobrenome <span class="obrig">*</span></label>
-      <input id="c-sobre" name="sobrenome" required maxlength="80" autocapitalize="words" autocomplete="off" value="${c.sobrenome || ''}">
+      <label for="c-sobre">Sobrenome</label>
+      <input id="c-sobre" name="sobrenome" maxlength="80" autocapitalize="words" autocomplete="off" value="${c.sobrenome || ''}">
       <label for="c-tel">Telefone (WhatsApp) <span class="obrig">*</span></label>
       <input id="c-tel" name="telefone" type="tel" inputmode="numeric" required pattern="${PADRAO_TEL}" maxlength="15"
         placeholder="(34) 99999-9999" title="DDD + número, ex.: (34) 99120-5525" data-on="mascaraTel" value="${telBR(c.telefone)}">
-      <label for="c-end">Endereço (rua, número, complemento) <span class="obrig">*</span></label>
-      <input id="c-end" name="endereco" required maxlength="200" autocomplete="off" value="${c.endereco || ''}">
+      <label for="c-end">Endereço (rua, número, complemento)</label>
+      <input id="c-end" name="endereco" maxlength="200" autocomplete="off" value="${c.endereco || ''}">
       <label for="c-bairro">Bairro</label>
       <input id="c-bairro" name="bairro" maxlength="80" value="${c.bairro || ''}">
       <label for="c-cid">Cidade</label>
@@ -364,7 +366,7 @@ function tCliente(id) {
   return html`${topo(nomeCompleto(c), '#clientes')}
     <section class="cartao">
       <p class="grande">📞 ${telBR(c.telefone)}</p>
-      <p>📍 ${enderecoCompleto(c)}</p>
+      ${enderecoCompleto(c) ? html`<p>📍 ${enderecoCompleto(c)}</p>` : ""}
       ${c.observacao ? html`<p class="obs">📝 ${c.observacao}</p>` : ''}
       ${contatos(c)}
     </section>
@@ -386,10 +388,10 @@ function tServicos() {
   const lista = ativos(S.servicos);
   return html`${topo('Serviços e preços')}
     <p class="dica">Preços de mão de obra. Toque em um serviço para mudar o preço ou a dica de manutenção.</p>
-    ${CATEGORIAS.map(cat => {
+    ${categorias().map(cat => {
       const doCat = lista.filter(s => s.categoria === cat);
       if (!doCat.length) return '';
-      return html`<details class="grupo"><summary>${ICONE_CAT[cat]} ${cat} (${doCat.length})</summary>
+      return html`<details class="grupo"><summary>${ICONE_CAT[cat] || '🧰'} ${cat} (${doCat.length})</summary>
         ${doCat.map(s => html`<a class="item" href="#servico-form/${s.id}">
           <div><b>${s.nome}</b><small>${faixa(s)}</small></div>
           <div class="dir"><b>${moeda(s.preco)}</b><small>por ${s.unidade || 'un'}</small></div></a>`)}</details>`;
@@ -403,8 +405,9 @@ function tServicoForm(id) {
   return html`${topo(id ? 'Editar serviço' : 'Novo serviço', '#servicos')}
     <form data-form="servico">
       <input type="hidden" name="id" value="${s.id || ''}">
-      <label for="s-cat">Categoria</label>
-      <select id="s-cat" name="categoria" required>${opcoesSelect(CATEGORIAS, s.categoria)}</select>
+      <label for="s-cat">Categoria (escolha ou escreva uma nova)</label>
+      <input id="s-cat" name="categoria" list="s-cats" required maxlength="40" autocomplete="off" value="${s.categoria || ''}">
+      <datalist id="s-cats">${categorias().map(c => html`<option value="${c}">`)}</datalist>
       <label for="s-nome">Nome do serviço</label>
       <input id="s-nome" name="nome" required maxlength="120" value="${s.nome || ''}">
       <div class="acoes2">
@@ -655,8 +658,9 @@ function linhaServ(s) {
 function listaServicos() {
   const todos = ativos(S.servicos);
   if (!todos.length) return html`<p class="vazio">Nenhum serviço cadastrado.</p>`;
-  const outros = todos.filter(s => !CATEGORIAS.includes(s.categoria));
-  return [...CATEGORIAS.map(cat => [cat, todos.filter(s => s.categoria === cat)]), ['Outros', outros]].map(([cat, doCat]) =>
+  const cats = categorias();
+  const outros = todos.filter(s => !cats.includes(s.categoria));
+  return [...cats.map(cat => [cat, todos.filter(s => s.categoria === cat)]), ['Outros', outros]].map(([cat, doCat]) =>
     doCat.length ? html`<p class="grupo-titulo">${ICONE_CAT[cat] || '🧰'} ${cat}</p>${doCat.map(linhaServ)}` : '');
 }
 
@@ -831,7 +835,7 @@ function mensagemOrcamento(at) {
     `Aqui é o Pietro, da *Pietro Resolve*, reparos a domicílio em ${cfg.cidade || 'Uberaba'}.`,
     'Segue o orçamento que combinamos:', '',
     `📋 *Orçamento nº ${n4(at.numero)}* · ${dataBR(at.data_orcamento)}`,
-    `📍 ${enderecoCompleto(c)}`, '',
+    ...(enderecoCompleto(c) ? [`📍 ${enderecoCompleto(c)}`] : []), '',
     '🔧 *Serviços*',
     ...itensDe(at).map(i => `• ${fmtQtd(i)} ${i.nome} – ${moeda(num(i.qtd) * num(i.preco))}`)
   ];
@@ -861,7 +865,7 @@ function mensagemOrcamento(at) {
 
 function mensagemAgendamento(at) {
   const c = cli(at.cliente_id);
-  return `Olá, *${c.nome}*! Serviço confirmado ✅\n📅 ${dataBR(at.data_agendada)} às ${String(at.data_agendada).slice(11, 16)}\n📍 ${enderecoCompleto(c)}\n🔧 ${resumoItens(at)}\n\nQualquer mudança, é só me avisar.\n*Chamou, o Pietro resolve.* 🛠️`;
+  return `Olá, *${c.nome}*! Serviço confirmado ✅\n📅 ${dataBR(at.data_agendada)} às ${String(at.data_agendada).slice(11, 16)}${enderecoCompleto(c) ? '\n📍 ' + enderecoCompleto(c) : ''}\n🔧 ${resumoItens(at)}\n\nQualquer mudança, é só me avisar.\n*Chamou, o Pietro resolve.* 🛠️`;
 }
 
 function mensagemCobranca(at) {
@@ -914,7 +918,7 @@ function tAtendimento(id) {
     <section class="cartao">
       ${selo(a.status)} ${['Orçamento', 'Cancelado'].includes(a.status) ? '' : selo(a.pagamento)}
       <h2><a href="#cliente/${a.cliente_id}">${nomeCompleto(c)}</a></h2>
-      <p>📍 ${enderecoCompleto(c)}</p>
+      ${enderecoCompleto(c) ? html`<p>📍 ${enderecoCompleto(c)}</p>` : ""}
       ${contatos(c)}
     </section>
     <section class="cartao"><h3>Serviços</h3>
@@ -1001,7 +1005,7 @@ function tExec(id) {
   const ro = fechado ? 'disabled' : '';
   depois.push(carregarMiniaturas);
   return html`${topo('Execução nº ' + n4(a.numero), '#at/' + id)}
-    <section class="cartao"><b>${nomeCompleto(c)}</b><p>📍 ${enderecoCompleto(c)}</p>
+    <section class="cartao"><b>${nomeCompleto(c)}</b>${enderecoCompleto(c) ? html`<p>📍 ${enderecoCompleto(c)}</p>` : ""}
       ${c && c.observacao ? html`<p class="obs">📝 ${c.observacao}</p>` : ''}${contatos(c)}</section>
     ${a.status === 'Aprovado' ? html`<button class="botao principal grande" data-acao="iniciar" data-id="${id}">▶ INICIAR SERVIÇO</button>` : ''}
     ${a.data_inicio ? html`<p class="dica">⏱️ Iniciado em ${dataHoraBR(a.data_inicio)}${fechado ? ' · Concluído em ' + dataHoraBR(a.data_conclusao) : ''}</p>` : ''}
@@ -1301,7 +1305,7 @@ function tDashboard() {
       <label for="f-cli">Cliente</label>
       <select id="f-cli" data-muda="dashCampo" data-campo="cliente">${opcoesSelect(filtrarClientes('').map(c => [c.id, nomeCompleto(c)]), dash.cliente, 'Todos')}</select>
       <label for="f-cat">Categoria</label>
-      <select id="f-cat" data-muda="dashCampo" data-campo="categoria">${opcoesSelect(CATEGORIAS, dash.categoria, 'Todas')}</select>
+      <select id="f-cat" data-muda="dashCampo" data-campo="categoria">${opcoesSelect(categorias(), dash.categoria, 'Todas')}</select>
       <label for="f-serv">Serviço</label>
       <select id="f-serv" data-muda="dashCampo" data-campo="servico">${opcoesSelect(ativos(S.servicos).filter(s => !dash.categoria || s.categoria === dash.categoria).map(s => [s.id, s.nome]), dash.servico, 'Todos')}</select>
       <label for="f-st">Situação</label>
@@ -1591,7 +1595,7 @@ const ACOES = {
       <input type="hidden" name="id" value="${d.id}">
       <label for="x-serv">Escolha da lista…</label>
       <select id="x-serv" name="servico"><option value="">Escolha…</option>
-        ${CATEGORIAS.map(cat => html`<optgroup label="${cat}">${ativos(S.servicos).filter(s => s.categoria === cat).map(s =>
+        ${categorias().map(cat => html`<optgroup label="${cat}">${ativos(S.servicos).filter(s => s.categoria === cat).map(s =>
           html`<option value="${s.id}">${s.nome} (${moeda(s.preco)})</option>`)}</optgroup>`)}</select>
       <label for="x-novo">…ou escreva o serviço</label>
       <input id="x-novo" name="novo" maxlength="120" placeholder="Ex.: troca de calha" autocomplete="off">
@@ -1630,12 +1634,12 @@ const ACOES = {
   finalizar: async d => {
     const a = atd(d.id);
     const fotos = ativos(S.fotos).filter(f => f.atendimento_id === d.id);
+    if (fila.some(f => f.atendimento_id === d.id)) throw new Error('Espere as fotos pendentes terminarem de enviar (ou toque em "Enviar agora").');
     const faltam = [];
-    if (fila.some(f => f.atendimento_id === d.id)) faltam.push('enviar as fotos pendentes');
-    if (!fotos.some(f => f.tipo === 'Antes')) faltam.push('tirar foto ANTES');
-    if (!fotos.some(f => f.tipo === 'Depois')) faltam.push('tirar foto DEPOIS');
-    CHECKLIST.forEach(([k, t]) => { if (!exec.checklist[k]) faltam.push(`marcar "${t}"`); });
-    if (faltam.length) throw new Error('Antes de finalizar, falta: ' + faltam.join(', ') + '.');
+    if (!fotos.some(f => f.tipo === 'Antes')) faltam.push('• foto ANTES');
+    if (!fotos.some(f => f.tipo === 'Depois')) faltam.push('• foto DEPOIS');
+    CHECKLIST.forEach(([k, t]) => { if (!exec.checklist[k]) faltam.push(`• ${t}`); });
+    if (faltam.length && !confirm('Ficou faltando:\n' + faltam.join('\n') + '\n\nFinalizar mesmo assim?')) return;
     abrirDialogo(html`<form data-form="finalizar"><h2>🏁 Finalizar serviço</h2>
       <input type="hidden" name="id" value="${a.id}">
       <p>Total do serviço: <b>${moeda(a.valor_total)}</b></p>
