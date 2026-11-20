@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Pietro Resolve · Reparos a domicílio</title>
-  <meta name="description" content="App da Pietro Resolve: clientes, orçamentos, execução com fotos, carteira e documentos.">
+  <title>Pietro Resolve · Planilha</title>
+  <meta name="description" content="Planilha da Pietro Resolve: serviços, clientes e caixa.">
   <meta name="theme-color" content="#F5C518">
   <meta name="robots" content="noindex">
   <link rel="manifest" href="manifest.json">
@@ -13,18 +13,27 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="planilha.css">
 </head>
 <body>
-  <main id="app" class="app"></main>
-  <div id="aviso" role="status" aria-live="polite" hidden></div>
-  <div id="carregando" hidden>
-    <div class="spinner" aria-hidden="true"></div>
-    <p id="carregando-txt">Carregando…</p>
+  <header class="barra">
+    <b>Pietro Resolve</b>
+    <span id="estado" aria-live="polite"></span>
+    <button id="b-menu" type="button" aria-label="Menu">☰</button>
+  </header>
+  <div id="menu" hidden>
+    <button type="button" data-acao="atualizar">🔄 Atualizar dados</button>
+    <a href="completo.html">🧰 Abrir o app completo</a>
+    <button type="button" data-acao="sair">🚪 Sair</button>
   </div>
-  <dialog id="dialogo"></dialog>
+  <main id="folha"></main>
+  <nav class="abas" id="abas">
+    <button type="button" data-aba="servicos">🔧 Serviços</button>
+    <button type="button" data-aba="clientes">👤 Clientes</button>
+    <button type="button" data-aba="caixa">💰 Caixa</button>
+  </nav>
+  <div id="aviso" role="status" hidden></div>
   <noscript>Este app precisa do JavaScript ativado.</noscript>
-  <script src="materiais.js"></script>
-  <script src="app.js"></script>
+  <script src="planilha.js"></script>
 </body>
 </html>
