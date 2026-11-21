@@ -93,21 +93,28 @@ function estado() {
 }
 
 /* ---------- valores de cada linha (digitado ou o que está salvo) ---------- */
+const qtdTxt = q => String(r2(num(q))).replace('.', ',');
+// Itens do atendimento como aparecem na planilha: "2x Quadro" + valor da linha (quantidade × preço)
+function itensVis(key) {
+  if (rasc[key]?.itens) return rasc[key].itens;
+  const a = (S.atendimentos || []).find(x => x.id === idLinha(key));
+  const l = a ? itensDe(a).map(i => ({ ...i, nome: (num(i.qtd) !== 1 ? qtdTxt(i.qtd) + 'x ' : '') + (i.nome || ''), valor: valorCampo(r2(num(i.qtd) * num(i.preco))) })) : [];
+  return l.length ? l : [{ nome: '', valor: '' }];
+}
+const itemVazio = i => !String(i.nome || '').trim() && !num(i.valor);
 function vServico(key) {
   const a = (S.atendimentos || []).find(x => x.id === idLinha(key));
   const d = rasc[key] || {};
-  const itens = a ? itensDe(a) : [];
-  const simples = !a || itens.length === 0 || (itens.length === 1 && num(itens[0].qtd) === 1);
   const cliSalvo = a ? cliPorId(a.cliente_id) : null;
   const cliente = d.cliente ?? nomeCompleto(cliSalvo);
   const achado = d.cliente !== undefined ? cliPorNome(d.cliente) : cliSalvo;
+  const itens = itensVis(key);
   return {
-    a, simples, itens, achado,
+    a, achado, itens,
+    soma: r2(itens.reduce((t, i) => t + num(i.valor), 0)),
     dia: d.dia ?? (a ? String(a.data_agendada || a.data_orcamento || '').slice(0, 10) : ''),
     cliente,
     tel: d.tel ?? (achado ? telBR(achado.telefone) : ''),
-    servico: d.servico ?? (simples ? (itens[0]?.nome || '') : itens.map(i => `${String(num(i.qtd)).replace('.', ',')}x ${i.nome}`).join(', ')),
-    valor: d.valor ?? (a ? valorCampo(simples ? (itens[0]?.preco ?? '') : a.valor_total) : ''),
     situacao: d.situacao ?? (a ? a.status : 'Orçamento'),
     pago: d.pago ?? (a && a.pagamento === 'Pago' ? a.forma_pagamento || 'Pix' : '')
   };
@@ -153,16 +160,31 @@ function marca(key, rotulo) {
   return rotulo;
 }
 
-function linhaServico(key) {
+const celNome = (key, i, it) => `<td class="larga">${inp(key, 'nome:' + i, it.nome, `placeholder="${i ? 'Outro serviço' : 'O que vai fazer'}"`)}</td>`;
+const celValor = (key, i, it, extra = '') => `<td class="num">${inp(key, 'valor:' + i, it.valor, 'inputmode="decimal" placeholder="0,00"')}${extra}</td>`;
+
+// Cada serviço ocupa a linha principal e, se tiver mais de um item, uma linha por item e outra com o total
+function linhaServico(tk) {
+  const [key, parte] = tk.split('~');
   const v = vServico(key), a = v.a, nova = !a;
+  const cobra = a && !rasc[key]?.itens && num(a.valor_total) !== v.soma ? `<small>cobra ${moeda(a.valor_total)}</small>` : '';
+  if (parte === 't') {
+    return `<tr data-k="${tk}" class="item total"><th class="fixa"></th><td></td>
+      <td class="rot-total">Total: ${moeda(v.soma)}</td><td class="num"><b>${valorCampo(v.soma)}</b>${cobra}</td><td colspan="5"></td></tr>`;
+  }
+  if (parte) {
+    const i = Number(parte);
+    return `<tr data-k="${tk}" class="item"><th class="fixa"><button class="b-fixa" data-acao="tirarItem" data-k="${key}" data-i="${i}" title="Tirar este serviço" aria-label="Tirar este serviço">✖</button></th><td class="seta">↳</td>${celNome(key, i, v.itens[i])}${celValor(key, i, v.itens[i])}
+      <td colspan="5"></td></tr>`;
+  }
   const fechado = a && a.status === 'Concluído';
   const situacoes = SITUACOES.filter(s => s !== 'Em execução' || v.situacao === 'Em execução');
-  return `<tr data-k="${key}" class="${nova && key === vazia.servicos ? 'vazia' : ''} s-${chave(v.situacao).replace(/\s+/g, '-')}">
-    <th class="fixa">${marca(key, a ? n4(a.numero) : (key === vazia.servicos ? '+' : '…'))}</th>
+  const eVazia = key === vazia.servicos;
+  return `<tr data-k="${tk}" class="${eVazia ? 'vazia' : ''} ${v.itens.length > 1 ? 'com-itens' : ''} s-${chave(v.situacao).replace(/\s+/g, '-')}">
+    <th class="fixa"><span>${marca(key, a ? n4(a.numero) : (eVazia ? '+' : '…'))}</span>${eVazia ? '' : `<button class="b-fixa" data-acao="maisItem" data-k="${key}" title="Mais um serviço para este cliente" aria-label="Mais um serviço para este cliente">＋ serv.</button>`}</th>
     <td>${inp(key, 'cliente', v.cliente, 'list="lista-clientes" autocomplete="off" placeholder="Nome do cliente"')}</td>
-    <td class="larga">${inp(key, 'servico', v.servico, `placeholder="O que vai fazer"${so(!v.simples, ' readonly title="Tem vários serviços: altere no app completo"')}`)}</td>
-    <td class="num">${inp(key, 'valor', v.valor, `inputmode="decimal" placeholder="0,00"${so(!v.simples, ' readonly')}`)}${a && v.simples && num(a.valor_total) !== num(v.valor) && rasc[key]?.valor === undefined
-      ? `<small>cobra ${moeda(a.valor_total)}</small>` : ''}</td>
+    ${celNome(key, 0, v.itens[0])}
+    ${celValor(key, 0, v.itens[0], v.itens.length === 1 ? cobra : '')}
     <td>${sel(key, 'situacao', v.situacao, situacoes, so(fechado, 'disabled'))}</td>
     <td>${sel(key, 'pago', v.pago, [['', 'A receber'], ...FORMAS.map(f => [f, 'Pago · ' + f])], so(nova, 'disabled title="Salve a linha primeiro"'))}</td>
     <td>${inp(key, 'tel', v.tel, 'inputmode="tel" placeholder="(34) 9…"')}</td>
@@ -207,7 +229,11 @@ function chavesServicos() {
     concluidos: a => a.status === 'Concluído'
   }[mostrar] || (() => true);
   const l = (S.atendimentos || []).filter(a => filtro(a) || rasc[k(a.id)]).sort((x, y) => num(x.numero) - num(y.numero)).map(a => k(a.id));
-  return [...l, ...novas.servicos.filter(n => !idDe[n]), vazia.servicos];
+  const expandir = key => {
+    const n = itensVis(key).length;
+    return n > 1 ? [key, ...Array.from({ length: n - 1 }, (_, i) => `${key}~${i + 1}`), `${key}~t`] : [key];
+  };
+  return [...l, ...novas.servicos.filter(n => !idDe[n]), vazia.servicos].flatMap(expandir);
 }
 function chavesClientes() {
   const l = ativos(S.clientes).sort((x, y) => (linhaDe[x.id] ? 1 : 0) - (linhaDe[y.id] ? 1 : 0) || chave(nomeCompleto(x)).localeCompare(chave(nomeCompleto(y)))).map(c => k(c.id));
@@ -286,6 +312,17 @@ function render() {
   estado();
 }
 
+// Deixa o elemento velho igual ao novo mexendo só no que mudou (os botões continuam os mesmos e o toque não se perde)
+function igualar(velho, novo) {
+  if (velho.innerHTML === novo.innerHTML && velho.className === novo.className) return;
+  [...velho.attributes].forEach(at => { if (!novo.hasAttribute(at.name)) velho.removeAttribute(at.name); });
+  [...novo.attributes].forEach(at => { if (velho.getAttribute(at.name) !== at.value) velho.setAttribute(at.name, at.value); });
+  const fv = [...velho.children], fn = [...novo.children];
+  if (fn.length && fv.length === fn.length && fn.every((f, i) => f.tagName === fv[i].tagName) && velho.childNodes.length === novo.childNodes.length) {
+    fn.forEach((f, i) => igualar(fv[i], f));
+  } else if (velho.innerHTML !== novo.innerHTML) velho.innerHTML = novo.innerHTML;
+}
+
 // Troca só o que mudou: as caixas de texto continuam as mesmas, então o toque e o cursor não se perdem
 function atualizarLinha(tr, nova, ativo) {
   tr.className = nova.className;
@@ -293,7 +330,7 @@ function atualizarLinha(tr, nova, ativo) {
     const velha = tr.children[i];
     if (!velha) return tr.append(cel.cloneNode(true));
     const ctl = cel.querySelector('[data-c]'), ctlV = velha.querySelector('[data-c]');
-    if (!ctl || !ctlV || ctl.tagName !== ctlV.tagName) { velha.className = cel.className; velha.innerHTML = cel.innerHTML; return; }
+    if (!ctl || !ctlV || ctl.tagName !== ctlV.tagName) return igualar(velha, cel);
     velha.className = cel.className;
     [...velha.childNodes].forEach(n => { if (n !== ctlV) n.remove(); });
     [...cel.childNodes].forEach(n => { if (n !== ctl) velha.append(n.cloneNode(true)); });
@@ -328,7 +365,7 @@ function atualizar() {
     }
     anterior = el;
   }
-  existentes.forEach((tr, key) => { if (!vistas.has(key) && !tr.contains(ativo)) tr.remove(); });
+  existentes.forEach((tr, key) => { if (!vistas.has(key)) tr.remove(); });
   document.querySelector('#folha .rodape').innerHTML = A.rodape();
   document.querySelector('#folha .topo-folha').innerHTML = A.topo();
   const dl = $('#lista-clientes');
@@ -352,7 +389,10 @@ function agendar(qual, key) {
     try {
       const pronto = await SALVAR[qual](key, foto);
       if (pronto !== false) {
-        Object.keys(foto).forEach(c => { if (rasc[key] && rasc[key][c] === foto[c]) delete rasc[key][c]; });
+        Object.keys(foto).forEach(c => {
+          if (c === 'itens' && foto.itens.some(itemVazio)) return; // tem linha em branco esperando: mantém
+          if (rasc[key] && rasc[key][c] === foto[c]) delete rasc[key][c];
+        });
         if (rasc[key] && !Object.keys(rasc[key]).length) delete rasc[key];
       }
     } catch (e) {
@@ -377,7 +417,8 @@ const SALVAR = {
   async servicos(key) {
     const v = vServico(key);
     if (!v.cliente.trim()) return falta(key, 'Falta o nome do cliente.');
-    if (!v.servico.trim()) return falta(key, 'Falta escrever o serviço.');
+    const preenchidos = v.itens.filter(i => !itemVazio(i));
+    if (!preenchidos.length || preenchidos.some(i => !String(i.nome || '').trim())) return falta(key, 'Falta escrever o serviço.');
     // cliente: acha pelo nome; se for novo, cria com o telefone da linha
     let c = cliPorNome(v.cliente);
     const tel = soDig(v.tel);
@@ -392,9 +433,12 @@ const SALVAR = {
     const dia = /^\d{4}-\d{2}-\d{2}$/.test(v.dia) ? v.dia : hoje();
     const hora = a && String(a.data_agendada).length >= 16 ? String(a.data_agendada).slice(10, 16) : 'T08:00';
     const base = a ? { ...a } : { material_modo: 'Cliente', deslocamento_tipo: 'Cidade', checklist_json: '{}', lista_materiais_json: '[]' };
-    const itens = v.simples
-      ? [{ ...(a && itensDe(a)[0] || { servico_id: '', categoria: '', unidade: 'un' }), nome: v.servico.trim().slice(0, 140), qtd: 1, preco: num(v.valor) }]
-      : itensDe(a);
+    const itens = preenchidos.map(i => {
+      const m = String(i.nome).trim().match(/^(\d+(?:[.,]\d+)?)\s*x\s+(.+)$/i); // "2x Quadro" = 2 quadros
+      const qtd = m ? num(m[1]) || 1 : 1;
+      return { servico_id: i.servico_id || '', categoria: i.categoria || '', unidade: i.unidade || 'un', feito: !!i.feito, desmontagem: !!i.desmontagem,
+        nome: (m ? m[2] : String(i.nome)).trim().slice(0, 140), qtd, preco: r2(num(i.valor) / qtd) };
+    });
     // Concluído só pelo "finalizar"; aqui salva antes como Aprovado
     const statusSalvar = quer === 'Concluído' ? (a && a.status === 'Concluído' ? 'Concluído' : 'Aprovado') : quer;
     const precisaPagar = v.pago && (!a || a.pagamento !== 'Pago' || a.forma_pagamento !== v.pago);
@@ -437,7 +481,7 @@ const SALVAR = {
 /* ---------- mensagens de WhatsApp ---------- */
 function mensagem(a) {
   const c = cliPorId(a.cliente_id) || {}, cfg = S.cfg || {};
-  const servs = itensDe(a).map(i => `• ${i.nome}`).join('\n');
+  const servs = itensDe(a).map(i => `• ${num(i.qtd) !== 1 ? qtdTxt(i.qtd) + 'x ' : ''}${i.nome} – ${moeda(num(i.qtd) * num(i.preco))}`).join('\n');
   const pix = cfg.chave_pix ? `\n💳 Chave Pix: ${cfg.chave_pix}` : '';
   if (a.status === 'Orçamento') {
     return `Olá, *${c.nome || ''}*! Aqui é o Pietro, da *Pietro Resolve*. Segue o orçamento nº ${n4(a.numero)}:\n\n${servs}\n\n💰 *Total: ${moeda(a.valor_total)}*\n✅ Garantia de ${cfg.garantia_dias || 90} dias\n\nPosso agendar? É só me responder com o melhor dia. 🛠️`;
@@ -468,6 +512,22 @@ async function carregar(silencioso) {
 const ACOES = {
   erro: b => aviso(erros[b.dataset.k], 'erro'),
   falta: b => aviso(faltas[b.dataset.k]),
+  maisItem: b => {
+    const key = b.dataset.k;
+    const l = itensVis(key).map(x => ({ ...x }));
+    l.push({ nome: '', valor: '' });
+    (rasc[key] = rasc[key] || {}).itens = l;
+    atualizar();
+    const el = document.querySelector(`tr[data-k="${key}~${l.length - 1}"] [data-c^="nome"]`);
+    if (el) { el.scrollIntoView({ block: 'nearest', inline: 'nearest' }); el.focus(); }
+  },
+  tirarItem: b => {
+    const key = b.dataset.k;
+    const l = itensVis(key).filter((_, i) => i !== Number(b.dataset.i)).map(x => ({ ...x }));
+    (rasc[key] = rasc[key] || {}).itens = l.length ? l : [{ nome: '', valor: '' }];
+    atualizar();
+    agendar('servicos', key);
+  },
   mes: b => {
     const [y, m] = mes.split('-').map(Number);
     mes = hoje(new Date(y, m - 1 + Number(b.dataset.d), 15)).slice(0, 7);
@@ -513,7 +573,13 @@ document.addEventListener('click', e => {
 function digitou(el) {
   const key = el.dataset.k;
   if (!key) return false;
-  (rasc[key] = rasc[key] || {})[el.dataset.c] = el.value;
+  const r = (rasc[key] = rasc[key] || {});
+  const [campo, i] = el.dataset.c.split(':');
+  if (i !== undefined) {
+    const l = itensVis(key).map(x => ({ ...x }));
+    l[Number(i)] = { ...l[Number(i)], [campo]: el.value };
+    r.itens = l;
+  } else r[el.dataset.c] = el.value;
   if (key === vazia[aba]) { // a linha em branco começou a ser usada: aparece outra embaixo
     novas[aba].push(key);
     vazia[aba] = 'n' + seq++;
@@ -539,7 +605,9 @@ document.addEventListener('keydown', e => {
   if (e.key !== 'Enter' || !el.dataset?.c || el.tagName !== 'INPUT') return;
   e.preventDefault();
   const tr = el.closest('tr');
-  const prox = tr.nextElementSibling?.querySelector(`[data-c="${el.dataset.c}"]`);
+  const col = el.dataset.c.split(':')[0];
+  let prox = null;
+  for (let t = tr.nextElementSibling; t && !prox; t = t.nextElementSibling) prox = t.querySelector(`[data-c="${col}"], [data-c^="${col}:"]`);
   el.blur();
   if (prox) prox.focus();
 });

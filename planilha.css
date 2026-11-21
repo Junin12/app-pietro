@@ -69,7 +69,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 .grade .fixa {
   position: sticky; left: 0; z-index: 1;
-  background: var(--cab); min-width: 46px; text-align: center; font-size: .75rem; font-weight: 600; color: var(--cinza);
+  background: var(--cab); min-width: 58px; text-align: center; padding: 3px 2px !important; font-size: .75rem; font-weight: 600; color: var(--cinza);
 }
 .grade thead .fixa { z-index: 3; }
 .grade input, .grade select {
@@ -117,6 +117,15 @@ tr.s-aprovado td:nth-child(5) select, tr.s-em-execucao td:nth-child(5) select { 
 .g-servicos td:nth-child(6) select { color: var(--laranja); }
 .g-servicos td:nth-child(6) select:has(option[value=""]:not(:checked)) { color: var(--verde); font-weight: 600; }
 tr.auto td { background: #F7F5EC; }
+tr.item td, tr.item th { background: #FBF9F1; }
+tr.item td.seta { color: var(--azul); text-align: right; padding-right: 10px; }
+.grade th.fixa span { display: block; }
+.b-fixa { display: block; margin: 2px auto 0; border: 1px solid var(--grade); background: var(--branco); border-radius: 6px; color: var(--azul); font-size: .68rem; font-weight: 600; padding: 2px 4px; white-space: nowrap; }
+tr.item .b-fixa { font-size: .9rem; padding: 4px 8px; color: var(--vermelho); }
+tr.total td { background: var(--amarelo-claro); }
+tr.total .rot-total { text-align: left; font-weight: 600; font-size: .85rem; padding: 0 10px; }
+tr.total td.num { text-align: right; padding: 8px; }
+tr.total td.num small { padding: 0; margin: 0; }
 tr.entrada td:nth-child(3) input { color: var(--verde); }
 tr.saida td:nth-child(3) input { color: var(--vermelho); }
 
