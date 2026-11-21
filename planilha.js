@@ -102,16 +102,41 @@ function itensVis(key) {
   return l.length ? l : [{ nome: '', valor: '' }];
 }
 const itemVazio = i => !String(i.nome || '').trim() && !num(i.valor);
+const listaMatDe = a => { try { const l = JSON.parse(a.lista_materiais_json || '[]'); return Array.isArray(l) ? l : []; } catch { return []; } };
+// Materiais como aparecem na planilha: loja, material, "70 pç" e o valor da linha (quantidade × preço)
+function matsVis(key) {
+  if (rasc[key]?.mats) return rasc[key].mats;
+  const a = (S.atendimentos || []).find(x => x.id === idLinha(key));
+  return a ? listaMatDe(a).map(m => ({ ...m, loja: m.loja || '', qtd: qtdTxt(m.qtd) + (m.unidade && m.unidade !== 'un' ? ' ' + m.unidade : ''), valor: valorCampo(r2(num(m.qtd) * num(m.preco))) })) : [];
+}
+const matVazio = m => !String(m.nome || '').trim() && !num(m.valor) && !String(m.loja || '').trim();
+const r4 = n => Math.round(n * 1e4) / 1e4;
+// "70 pç" → 70 e "pç"; vazio → 1 un
+function lerQtd(t) {
+  const m = String(t || '').trim().match(/^(\d+(?:[.,]\d+)?)\s*(.*)$/);
+  if (m) return { qtd: num(m[1]) || 1, unidade: m[2].trim().slice(0, 20) || 'un' };
+  return { qtd: 1, unidade: String(t || '').trim().slice(0, 20) || 'un' };
+}
 function vServico(key) {
   const a = (S.atendimentos || []).find(x => x.id === idLinha(key));
   const d = rasc[key] || {};
   const cliSalvo = a ? cliPorId(a.cliente_id) : null;
   const cliente = d.cliente ?? nomeCompleto(cliSalvo);
   const achado = d.cliente !== undefined ? cliPorNome(d.cliente) : cliSalvo;
-  const itens = itensVis(key);
+  const itens = itensVis(key), mats = matsVis(key);
+  const soma = r2(itens.reduce((t, i) => t + num(i.valor), 0));
+  const somaMat = r2(mats.reduce((t, m) => t + num(m.valor), 0));
+  // Total: o que o servidor calculou; enquanto há mudança sem salvar, uma prévia (mínimo do atendimento + materiais sem taxa)
+  const mudou = d.itens || d.mats;
+  const minimo = num(S.cfg?.valor_minimo);
+  const mao = soma > 0 && soma < minimo ? minimo : soma;
+  const matTotal = d.mats ? somaMat : num(a?.valor_materiais);
   return {
-    a, achado, itens,
-    soma: r2(itens.reduce((t, i) => t + num(i.valor), 0)),
+    a, achado, itens, mats, soma, somaMat,
+    total: a && !mudou ? num(a.valor_total) : r2(mao + num(a?.valor_deslocamento) - num(a?.desconto) + matTotal),
+    matTotal: a && !mudou ? num(a.valor_materiais) : matTotal,
+    endServ: d.endServ ?? (a?.endereco_servico || ''),
+    validade: d.validade ?? (a && num(a.validade_dias) ? String(num(a.validade_dias)) : ''),
     dia: d.dia ?? (a ? String(a.data_agendada || a.data_orcamento || '').slice(0, 10) : ''),
     cliente,
     tel: d.tel ?? (achado ? telBR(achado.telefone) : ''),
@@ -160,6 +185,7 @@ function marca(key, rotulo) {
   return rotulo;
 }
 
+const COLS = 11; // colunas da aba Serviços
 const celNome = (key, i, it) => `<td class="larga">${inp(key, 'nome:' + i, it.nome, `placeholder="${i ? 'Outro serviço' : 'O que vai fazer'}"`)}</td>`;
 const celValor = (key, i, it, extra = '') => `<td class="num">${inp(key, 'valor:' + i, it.valor, 'inputmode="decimal" placeholder="0,00"')}${extra}</td>`;
 
@@ -169,27 +195,41 @@ function linhaServico(tk) {
   const v = vServico(key), a = v.a, nova = !a;
   const cobra = a && !rasc[key]?.itens && num(a.valor_total) !== v.soma ? `<small>cobra ${moeda(a.valor_total)}</small>` : '';
   if (parte === 't') {
-    return `<tr data-k="${tk}" class="item total"><th class="fixa"></th><td></td>
-      <td class="rot-total">Total: ${moeda(v.soma)}</td><td class="num"><b>${valorCampo(v.soma)}</b>${cobra}</td><td colspan="5"></td></tr>`;
+    const partes = v.mats.length ? ` <span class="partes">mão de obra ${moeda(v.total - v.matTotal)} + materiais ${moeda(v.matTotal)}</span>` : '';
+    return `<tr data-k="${tk}" class="item total"><th class="fixa"></th>
+      <td colspan="3" class="rot-total"><b>Total ${moeda(v.total)}</b>${partes}</td><td colspan="${COLS - 4}"></td></tr>`;
+  }
+  if (parte === 'mh') {
+    return `<tr data-k="${tk}" class="mat-cab"><th class="fixa">🧱</th><td>Loja</td><td>Material</td><td class="dir">Valor (R$)</td><td>Qtd</td><td colspan="${COLS - 5}"></td></tr>`;
+  }
+  if (parte && parte[0] === 'm') {
+    const j = Number(parte.slice(1)), m = v.mats[j];
+    return `<tr data-k="${tk}" class="item mat"><th class="fixa"><button class="b-fixa" data-acao="tirarMat" data-k="${key}" data-i="${j}" title="Tirar este material" aria-label="Tirar este material">✖</button></th>
+      <td>${inp(key, 'mloja:' + j, m.loja, 'list="lista-lojas" autocomplete="off" placeholder="Loja"')}</td>
+      <td class="larga">${inp(key, 'mnome:' + j, m.nome, 'placeholder="Material"')}</td>
+      <td class="num">${inp(key, 'mvalor:' + j, m.valor, 'inputmode="decimal" placeholder="0,00"')}</td>
+      <td>${inp(key, 'mqtd:' + j, m.qtd, 'placeholder="Ex.: 70 pç"')}</td><td colspan="${COLS - 5}"></td></tr>`;
   }
   if (parte) {
     const i = Number(parte);
     return `<tr data-k="${tk}" class="item"><th class="fixa"><button class="b-fixa" data-acao="tirarItem" data-k="${key}" data-i="${i}" title="Tirar este serviço" aria-label="Tirar este serviço">✖</button></th><td class="seta">↳</td>${celNome(key, i, v.itens[i])}${celValor(key, i, v.itens[i])}
-      <td colspan="5"></td></tr>`;
+      <td colspan="${COLS - 4}"></td></tr>`;
   }
   const fechado = a && a.status === 'Concluído';
   const situacoes = SITUACOES.filter(s => s !== 'Em execução' || v.situacao === 'Em execução');
   const eVazia = key === vazia.servicos;
   return `<tr data-k="${tk}" class="${eVazia ? 'vazia' : ''} ${v.itens.length > 1 ? 'com-itens' : ''} s-${chave(v.situacao).replace(/\s+/g, '-')}">
-    <th class="fixa"><span>${marca(key, a ? n4(a.numero) : (eVazia ? '+' : '…'))}</span>${eVazia ? '' : `<button class="b-fixa" data-acao="maisItem" data-k="${key}" title="Mais um serviço para este cliente" aria-label="Mais um serviço para este cliente">＋ serv.</button>`}</th>
+    <th class="fixa"><span>${marca(key, a ? n4(a.numero) : (eVazia ? '+' : '…'))}</span>${eVazia ? '' : `<button class="b-fixa" data-acao="menuMais" data-k="${key}" title="Mais serviço, material, PDF" aria-label="Mais opções desta linha">＋ mais</button>`}</th>
     <td>${inp(key, 'cliente', v.cliente, 'list="lista-clientes" autocomplete="off" placeholder="Nome do cliente"')}</td>
     ${celNome(key, 0, v.itens[0])}
-    ${celValor(key, 0, v.itens[0], v.itens.length === 1 ? cobra : '')}
+    ${celValor(key, 0, v.itens[0], v.itens.length === 1 && !v.mats.length ? cobra : '')}
     <td>${sel(key, 'situacao', v.situacao, situacoes, so(fechado, 'disabled'))}</td>
     <td>${sel(key, 'pago', v.pago, [['', 'A receber'], ...FORMAS.map(f => [f, 'Pago · ' + f])], so(nova, 'disabled title="Salve a linha primeiro"'))}</td>
     <td>${inp(key, 'tel', v.tel, 'inputmode="tel" placeholder="(34) 9…"')}</td>
     <td>${inp(key, 'dia', v.dia, 'type="date"')}</td>
-    <td class="acoes">${a ? `<button data-acao="whats" data-k="${key}" title="Mandar no WhatsApp">💬</button><button data-acao="apagar" data-k="${key}" title="Apagar">🗑</button>` : ''}</td>
+    <td class="larga">${inp(key, 'endServ', v.endServ, `placeholder="${esc(v.achado ? 'Igual ao do cliente' : 'Onde é o serviço')}"`)}</td>
+    <td class="num">${inp(key, 'validade', v.validade, `inputmode="numeric" placeholder="${num(S.cfg?.validade_orcamento) || 15}"`)}</td>
+    <td class="acoes">${a ? `<button data-acao="pdf" data-k="${key}" title="PDF do orçamento">📄</button><button data-acao="whats" data-k="${key}" title="Mandar no WhatsApp">💬</button><button data-acao="apagar" data-k="${key}" title="Apagar">🗑</button>` : ''}</td>
   </tr>`;
 }
 
@@ -230,8 +270,10 @@ function chavesServicos() {
   }[mostrar] || (() => true);
   const l = (S.atendimentos || []).filter(a => filtro(a) || rasc[k(a.id)]).sort((x, y) => num(x.numero) - num(y.numero)).map(a => k(a.id));
   const expandir = key => {
-    const n = itensVis(key).length;
-    return n > 1 ? [key, ...Array.from({ length: n - 1 }, (_, i) => `${key}~${i + 1}`), `${key}~t`] : [key];
+    const n = itensVis(key).length, m = matsVis(key).length;
+    return [key, ...Array.from({ length: n - 1 }, (_, i) => `${key}~${i + 1}`),
+      ...(m ? [`${key}~mh`, ...Array.from({ length: m }, (_, j) => `${key}~m${j}`)] : []),
+      ...(n > 1 || m ? [`${key}~t`] : [])];
   };
   return [...l, ...novas.servicos.filter(n => !idDe[n]), vazia.servicos].flatMap(expandir);
 }
@@ -248,7 +290,7 @@ function chavesCaixa() {
 const ABAS = {
   servicos: {
     chaves: chavesServicos, linha: linhaServico,
-    cab: ['Nº', 'Cliente', 'Serviço', 'Valor (R$)', 'Situação', 'Pagamento', 'Telefone', 'Dia', ''],
+    cab: ['Nº', 'Cliente', 'Serviço', 'Valor (R$)', 'Situação', 'Pagamento', 'Telefone', 'Dia', 'Endereço do serviço', 'Validade (dias)', ''],
     topo: () => `<label class="filtro">Mostrar ${sel('', 'mostrar', mostrar, [['todos', 'Todos'], ['orcamentos', 'Orçamentos'], ['afazer', 'A fazer'], ['receber', 'A receber'], ['concluidos', 'Concluídos']], 'data-filtro="mostrar"')}</label>`,
     rodape: () => {
       const l = S.atendimentos || [];
@@ -281,6 +323,8 @@ const ABAS = {
   }
 };
 
+const lojasUsadas = () => [...new Set((S.atendimentos || []).flatMap(a => listaMatDe(a).map(m => String(m.loja || '').trim())).filter(Boolean))].sort();
+
 /* ---------- pintar a tela ---------- */
 function telaLogin() {
   $('#abas').hidden = true;
@@ -308,7 +352,8 @@ function render() {
       <tbody>${A.chaves().map(A.linha).join('')}</tbody>
     </table></div>
     <div class="rodape">${A.rodape()}</div>
-    <datalist id="lista-clientes">${ativos(S.clientes).map(c => `<option value="${esc(nomeCompleto(c))}">`).join('')}</datalist>`;
+    <datalist id="lista-clientes">${ativos(S.clientes).map(c => `<option value="${esc(nomeCompleto(c))}">`).join('')}</datalist>
+    <datalist id="lista-lojas">${lojasUsadas().map(l => `<option value="${esc(l)}">`).join('')}</datalist>`;
   estado();
 }
 
@@ -318,7 +363,9 @@ function igualar(velho, novo) {
   [...velho.attributes].forEach(at => { if (!novo.hasAttribute(at.name)) velho.removeAttribute(at.name); });
   [...novo.attributes].forEach(at => { if (velho.getAttribute(at.name) !== at.value) velho.setAttribute(at.name, at.value); });
   const fv = [...velho.children], fn = [...novo.children];
-  if (fn.length && fv.length === fn.length && fn.every((f, i) => f.tagName === fv[i].tagName) && velho.childNodes.length === novo.childNodes.length) {
+  const nv = [...velho.childNodes], nn = [...novo.childNodes];
+  const mesmoMolde = nv.length === nn.length && nn.every((n, i) => n.nodeType === nv[i].nodeType && (n.nodeType !== 1 || n.tagName === nv[i].tagName) && (n.nodeType === 1 || n.textContent === nv[i].textContent));
+  if (fn.length && fv.length === fn.length && mesmoMolde) {
     fn.forEach((f, i) => igualar(fv[i], f));
   } else if (velho.innerHTML !== novo.innerHTML) velho.innerHTML = novo.innerHTML;
 }
@@ -391,6 +438,7 @@ function agendar(qual, key) {
       if (pronto !== false) {
         Object.keys(foto).forEach(c => {
           if (c === 'itens' && foto.itens.some(itemVazio)) return; // tem linha em branco esperando: mantém
+          if (c === 'mats' && foto.mats.some(matVazio)) return;
           if (rasc[key] && rasc[key][c] === foto[c]) delete rasc[key][c];
         });
         if (rasc[key] && !Object.keys(rasc[key]).length) delete rasc[key];
@@ -437,13 +485,21 @@ const SALVAR = {
       const m = String(i.nome).trim().match(/^(\d+(?:[.,]\d+)?)\s*x\s+(.+)$/i); // "2x Quadro" = 2 quadros
       const qtd = m ? num(m[1]) || 1 : 1;
       return { servico_id: i.servico_id || '', categoria: i.categoria || '', unidade: i.unidade || 'un', feito: !!i.feito, desmontagem: !!i.desmontagem,
-        nome: (m ? m[2] : String(i.nome)).trim().slice(0, 140), qtd, preco: r2(num(i.valor) / qtd) };
+        nome: (m ? m[2] : String(i.nome)).trim().slice(0, 140), qtd, preco: r4(num(i.valor) / qtd) };
     });
     // Concluído só pelo "finalizar"; aqui salva antes como Aprovado
     const statusSalvar = quer === 'Concluído' ? (a && a.status === 'Concluído' ? 'Concluído' : 'Aprovado') : quer;
     const precisaPagar = v.pago && (!a || a.pagamento !== 'Pago' || a.forma_pagamento !== v.pago);
     const status = precisaPagar && ['Orçamento', 'Cancelado'].includes(statusSalvar) ? 'Aprovado' : statusSalvar;
-    const r = await api('salvar_atendimento', { registro: { ...base, cliente_id: c.id, itens_json: itens, status, data_agendada: dia + hora } });
+    const extra = { endereco_servico: v.endServ.trim(), validade_dias: v.validade === '' ? '' : num(v.validade) };
+    if (rasc[key]?.mats) {
+      const mats = v.mats.filter(m => !matVazio(m));
+      if (mats.some(m => !String(m.nome || '').trim())) return falta(key, 'Falta o nome do material.');
+      // materiais da planilha: o Pietro compra e cobra o valor da nota, sem taxa (como no orçamento à mão)
+      extra.lista_materiais_json = mats.map(m => { const q = lerQtd(m.qtd); return { servico_id: m.servico_id || '', loja: String(m.loja || '').trim(), nome: String(m.nome).trim(), unidade: q.unidade, qtd: q.qtd, preco: r4(num(m.valor) / q.qtd) }; });
+      if (mats.length) Object.assign(extra, { material_modo: 'Pietro', margem_material: 0 });
+    }
+    const r = await api('salvar_atendimento', { registro: { ...base, cliente_id: c.id, itens_json: itens, status, data_agendada: dia + hora, ...extra } });
     if (!a) criado(key, r.resultado.id, 'servicos');
     a = S.atendimentos.find(x => x.id === idLinha(key));
     if (quer === 'Concluído' && a.status !== 'Concluído') {
@@ -481,10 +537,11 @@ const SALVAR = {
 /* ---------- mensagens de WhatsApp ---------- */
 function mensagem(a) {
   const c = cliPorId(a.cliente_id) || {}, cfg = S.cfg || {};
-  const servs = itensDe(a).map(i => `• ${num(i.qtd) !== 1 ? qtdTxt(i.qtd) + 'x ' : ''}${i.nome} – ${moeda(num(i.qtd) * num(i.preco))}`).join('\n');
+  const servs = itensDe(a).map(i => `• ${num(i.qtd) !== 1 ? qtdTxt(i.qtd) + 'x ' : ''}${i.nome}${num(i.preco) ? ' – ' + moeda(num(i.qtd) * num(i.preco)) : ''}`).join('\n');
   const pix = cfg.chave_pix ? `\n💳 Chave Pix: ${cfg.chave_pix}` : '';
   if (a.status === 'Orçamento') {
-    return `Olá, *${c.nome || ''}*! Aqui é o Pietro, da *Pietro Resolve*. Segue o orçamento nº ${n4(a.numero)}:\n\n${servs}\n\n💰 *Total: ${moeda(a.valor_total)}*\n✅ Garantia de ${cfg.garantia_dias || 90} dias\n\nPosso agendar? É só me responder com o melhor dia. 🛠️`;
+    const mat = num(a.valor_materiais) ? `\n🧱 Materiais – ${moeda(a.valor_materiais)}` : '';
+    return `Olá, *${c.nome || ''}*! Aqui é o Pietro, da *Pietro Resolve*. Segue o orçamento nº ${n4(a.numero)}:\n\n${servs}${mat}\n\n💰 *Total: ${moeda(a.valor_total)}*\n✅ Garantia de ${cfg.garantia_dias || 90} dias\n\nPosso agendar? É só me responder com o melhor dia. 🛠️`;
   }
   if (a.pagamento !== 'Pago' && a.status === 'Concluído') {
     return `Olá, *${c.nome || ''}*! Passando para lembrar do pagamento do serviço nº ${n4(a.numero)}: *${moeda(a.valor_total)}*.${pix}\nMuito obrigado!\nPietro · Pietro Resolve 🛠️`;
@@ -509,10 +566,15 @@ async function carregar(silencioso) {
   render();
 }
 
+let arquivoPdf = null;
+function abrirDialogo(conteudo) { const d = $('#dialogo'); d.innerHTML = conteudo; if (!d.open) d.showModal(); }
+function fecharDialogo() { const d = $('#dialogo'); if (d.open) d.close(); }
+
 const ACOES = {
   erro: b => aviso(erros[b.dataset.k], 'erro'),
   falta: b => aviso(faltas[b.dataset.k]),
   maisItem: b => {
+    $('#mais').hidden = true;
     const key = b.dataset.k;
     const l = itensVis(key).map(x => ({ ...x }));
     l.push({ nome: '', valor: '' });
@@ -521,6 +583,72 @@ const ACOES = {
     const el = document.querySelector(`tr[data-k="${key}~${l.length - 1}"] [data-c^="nome"]`);
     if (el) { el.scrollIntoView({ block: 'nearest', inline: 'nearest' }); el.focus(); }
   },
+  menuMais: b => {
+    const key = b.dataset.k, a = (S.atendimentos || []).find(x => x.id === idLinha(key));
+    const m = $('#mais');
+    m.innerHTML = `<button data-acao="maisItem" data-k="${key}">🔧 Mais um serviço</button>
+      <button data-acao="maisMat" data-k="${key}">🧱 Material</button>
+      ${a ? `<button data-acao="pdf" data-k="${key}">📄 PDF do orçamento</button>
+      <button data-acao="whats" data-k="${key}">💬 Mensagem no WhatsApp</button>
+      <button data-acao="apagar" data-k="${key}">🗑 Apagar</button>` : ''}`;
+    const r = b.getBoundingClientRect();
+    m.style.left = Math.min(r.left, innerWidth - 250) + 'px';
+    m.style.top = Math.min(r.bottom + 4, innerHeight - 260) + 'px';
+    m.hidden = false;
+  },
+  maisMat: b => {
+    $('#mais').hidden = true;
+    const key = b.dataset.k;
+    const l = matsVis(key).map(x => ({ ...x }));
+    l.push({ loja: l.length ? l[l.length - 1].loja : '', nome: '', qtd: '', valor: '' }); // repete a loja da linha de cima
+    (rasc[key] = rasc[key] || {}).mats = l;
+    atualizar();
+    const el = document.querySelector(`tr[data-k="${key}~m${l.length - 1}"] [data-c^="mnome"]`);
+    if (el) { el.scrollIntoView({ block: 'nearest', inline: 'nearest' }); el.focus(); }
+  },
+  tirarMat: b => {
+    const key = b.dataset.k;
+    (rasc[key] = rasc[key] || {}).mats = matsVis(key).filter((_, i) => i !== Number(b.dataset.i)).map(x => ({ ...x }));
+    atualizar();
+    agendar('servicos', key);
+  },
+  pdf: async b => {
+    $('#mais').hidden = true;
+    const key = b.dataset.k;
+    abrirDialogo('<p class="centro">⏳ Salvando e gerando o PDF…<br><small>Pode levar alguns segundos.</small></p>');
+    try {
+      await fila; // espera o que ainda está sendo salvo
+      if (faltas[key] || erros[key]) throw new Error('Arrume a linha antes: ' + (faltas[key] || erros[key]));
+      const id = idLinha(key);
+      if (!id) throw new Error('Preencha a linha primeiro.');
+      const doc = (await api('documento_gerar', { atendimento_id: id, tipo: 'Orçamento' })).resultado;
+      const r = await api('documento_baixar', { id: doc.id });
+      const bytes = Uint8Array.from(atob(r.base64), ch => ch.charCodeAt(0));
+      arquivoPdf = new File([bytes], r.nome, { type: 'application/pdf' });
+      const url = URL.createObjectURL(arquivoPdf);
+      abrirDialogo(`<h2>📄 Orçamento ${esc(doc.numero)}</h2><p>${esc(doc.cliente_nome)} · ${moeda(doc.valor)}</p>
+        <button class="principal" data-acao="enviarPdf" data-k="${key}">💬 Enviar ao cliente</button>
+        <a class="botao" href="${url}" target="_blank" rel="noopener">👁 Abrir</a>
+        <a class="botao" href="${url}" download="${esc(r.nome)}">⬇ Baixar</a>
+        <button class="botao" data-acao="fecharDialogo">Fechar</button>`);
+    } catch (e) {
+      abrirDialogo(`<p>${esc(e.message)}</p><button class="botao" data-acao="fecharDialogo">Fechar</button>`);
+    }
+  },
+  enviarPdf: async b => {
+    const a = S.atendimentos.find(x => x.id === idLinha(b.dataset.k));
+    const c = (a && cliPorId(a.cliente_id)) || {};
+    const texto = `Olá, ${c.nome || ''}! Segue o orçamento nº ${n4(a?.numero)}. Qualquer dúvida, estou à disposição. Chamou, o Pietro resolve! 🛠️`;
+    if (navigator.canShare && navigator.canShare({ files: [arquivoPdf] })) {
+      try { await navigator.share({ files: [arquivoPdf], text: texto }); } catch (e) { if (e.name !== 'AbortError') aviso(e.message, 'erro'); }
+      return;
+    }
+    const l = document.createElement('a');
+    l.href = URL.createObjectURL(arquivoPdf); l.download = arquivoPdf.name; l.click();
+    window.open(waLink(c.telefone, texto + ' (PDF em anexo)'), '_blank', 'noopener');
+    aviso('PDF baixado. No WhatsApp, toque no 📎 para anexar.');
+  },
+  fecharDialogo: () => fecharDialogo(),
   tirarItem: b => {
     const key = b.dataset.k;
     const l = itensVis(key).filter((_, i) => i !== Number(b.dataset.i)).map(x => ({ ...x }));
@@ -534,12 +662,14 @@ const ACOES = {
     render();
   },
   whats: b => {
+    $('#mais').hidden = true;
     const a = S.atendimentos.find(x => x.id === idLinha(b.dataset.k));
     const c = a && cliPorId(a.cliente_id);
     if (!c) return aviso('Cliente sem telefone.', 'erro');
     window.open(waLink(c.telefone, mensagem(a)), '_blank', 'noopener');
   },
   apagar: async b => {
+    $('#mais').hidden = true;
     const key = b.dataset.k, id = idLinha(key);
     const nomes = { servicos: 'este serviço (com fotos e documentos dele)', clientes: 'este cliente', caixa: 'este lançamento' };
     if (!confirm(`Apagar ${nomes[aba]}?`)) return;
@@ -566,8 +696,9 @@ document.addEventListener('click', e => {
   if (tab) { aba = tab.dataset.aba; gravarLocal('aba_planilha', aba); render(); rolarFim(); return; }
   if (e.target.closest('#b-menu')) { $('#menu').hidden = !$('#menu').hidden; return; }
   const b = e.target.closest('[data-acao]');
-  if (b && ACOES[b.dataset.acao]) { e.preventDefault(); ACOES[b.dataset.acao](b); return; }
+  if (b && ACOES[b.dataset.acao]) { e.preventDefault(); if (b.dataset.acao !== 'menuMais') $('#mais').hidden = true; ACOES[b.dataset.acao](b); return; }
   if (!e.target.closest('#menu')) $('#menu').hidden = true;
+  if (!e.target.closest('#mais')) $('#mais').hidden = true;
 });
 
 function digitou(el) {
@@ -575,7 +706,11 @@ function digitou(el) {
   if (!key) return false;
   const r = (rasc[key] = rasc[key] || {});
   const [campo, i] = el.dataset.c.split(':');
-  if (i !== undefined) {
+  if (i !== undefined && campo[0] === 'm') { // material: mloja, mnome, mvalor, mqtd
+    const l = matsVis(key).map(x => ({ ...x }));
+    l[Number(i)] = { ...l[Number(i)], [campo.slice(1)]: el.value };
+    r.mats = l;
+  } else if (i !== undefined) {
     const l = itensVis(key).map(x => ({ ...x }));
     l[Number(i)] = { ...l[Number(i)], [campo]: el.value };
     r.itens = l;

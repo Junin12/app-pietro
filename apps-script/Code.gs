@@ -20,7 +20,7 @@ const ABAS = {
   ATENDIMENTOS: ['id', 'numero', 'cliente_id', 'itens_json', 'subtotal_servicos', 'deslocamento_tipo', 'km', 'valor_deslocamento',
     'material_modo', 'valor_materiais', 'desconto', 'valor_total', 'status', 'data_orcamento', 'data_agendada', 'data_inicio',
     'data_conclusao', 'ocorrencias', 'checklist_json', 'recomendacoes_extra', 'observacao', 'pagamento', 'forma_pagamento',
-    'data_pagamento', 'criado_em', 'atualizado_em', 'lista_materiais_json', 'margem_material'],
+    'data_pagamento', 'criado_em', 'atualizado_em', 'lista_materiais_json', 'margem_material', 'endereco_servico', 'validade_dias'],
   FOTOS: ['id', 'atendimento_id', 'tipo', 'legenda', 'file_id', 'data', 'ativo'],
   MATERIAIS: ['id', 'atendimento_id', 'descricao', 'quantidade', 'valor_unitario', 'valor_total', 'comprado_por', 'repassar_cliente', 'data', 'ativo'],
   CARTEIRA: ['id', 'data', 'tipo', 'categoria', 'descricao', 'valor', 'forma_pagamento', 'atendimento_id', 'cliente_id', 'origem_id', 'automatico', 'ativo', 'criado_em', 'atualizado_em'],
@@ -72,7 +72,8 @@ const CAMPOS = {
     cliente_id: { obr: 1, max: 40, rot: 'Cliente' }, deslocamento_tipo: { lista: ['Cidade', 'Fora'] }, km: { num: 1 },
     valor_deslocamento: { num: 1 }, material_modo: { lista: ['Cliente', 'Pietro'] }, desconto: { num: 1 }, margem_material: { num: 1 },
     status: { lista: STATUS }, data_agendada: { max: 16 }, observacao: { max: 500 },
-    ocorrencias: { max: 4000 }, recomendacoes_extra: { max: 2000 }
+    ocorrencias: { max: 4000 }, recomendacoes_extra: { max: 2000 },
+    endereco_servico: { max: 200, rot: 'Endereço do serviço' }, validade_dias: { num: 1, rot: 'Validade' }
   }
 };
 
@@ -635,6 +636,9 @@ function gerarDoc_(tipo, at) {
   t.d = {
     titulo: tipo, numero, at, cli, cfg, itens, lista,
     totalLista: r2(lista.reduce((s, m) => s + num(m.qtd) * num(m.preco), 0)),
+    lojas: agruparPorLoja_(lista),
+    validade: validadeDe_(at, cfg),
+    enderecoServico: String(at.endereco_servico || '').trim() || enderecoCli(cli),
     materialEstimado: at.material_modo === 'Pietro' && num(at.valor_materiais) > 0 &&
       !ler('MATERIAIS').some(m => m.atendimento_id === at.id && m.ativo !== 'não' && m.comprado_por === 'Pietro' && m.repassar_cliente !== 'não'),
     logo: typeof LOGO_BASE64 === 'undefined' ? '' : 'data:image/jpeg;base64,' + LOGO_BASE64,
@@ -661,6 +665,27 @@ function gerarDoc_(tipo, at) {
     tipo, numero, atendimento_id: at.id, cliente_id: at.cliente_id, cliente_nome: nomeCli(cli),
     data: hoje(), valor: num(at.valor_total), file_id: arq.getId(), nome_arquivo: nome
   });
+}
+
+// Materiais agrupados pela loja, na ordem em que aparecem (como o Pietro escreve à mão)
+function agruparPorLoja_(lista) {
+  const grupos = [];
+  lista.forEach(m => {
+    const loja = String(m.loja || '').trim();
+    let g = grupos.find(x => x.loja === loja);
+    if (!g) grupos.push(g = { loja, itens: [] });
+    g.itens.push(m);
+  });
+  return grupos;
+}
+
+// Data limite do orçamento: os dias escolhidos no orçamento ou os dos Ajustes
+function validadeDe_(at, cfg) {
+  const dias = num(at.validade_dias) || num(cfg.validade_orcamento) || 15;
+  const base = /^\d{4}-\d{2}-\d{2}/.test(String(at.data_orcamento)) ? String(at.data_orcamento).slice(0, 10) : hoje();
+  const d = new Date(base + 'T12:00:00');
+  d.setDate(d.getDate() + dias);
+  return { dias, data: Utilities.formatDate(d, TZ, 'yyyy-MM-dd') };
 }
 
 function resumoValores_(at, itens) {
@@ -911,7 +936,7 @@ function limparItens_(entrada) {
     return {
       servico_id: String(i.servico_id || '').slice(0, 40), nome: String(i.nome || 'Serviço').slice(0, 140),
       categoria: String(i.categoria || '').slice(0, 40), unidade: String(i.unidade || 'un').slice(0, 20),
-      qtd: r2(qtd), preco: r2(preco), feito: !!i.feito, desmontagem: !!i.desmontagem
+      qtd: r2(qtd), preco: r4_(preco), feito: !!i.feito, desmontagem: !!i.desmontagem
     };
   });
 }
@@ -930,7 +955,8 @@ function limparLista_(entrada) {
   if (!Array.isArray(l)) return [];
   return l.slice(0, 150).map(m => ({
     servico_id: String(m.servico_id || '').slice(0, 60), nome: String(m.nome || '').trim().slice(0, 100),
-    unidade: String(m.unidade || 'un').slice(0, 20), qtd: r2(Math.max(num(m.qtd), 0)), preco: r2(Math.max(num(m.preco), 0))
+    loja: String(m.loja || '').trim().slice(0, 60), // loja onde compra (agrupa a lista no PDF)
+    unidade: String(m.unidade || 'un').slice(0, 20), qtd: r2(Math.max(num(m.qtd), 0)), preco: r4_(Math.max(num(m.preco), 0))
   })).filter(m => m.nome && m.qtd > 0);
 }
 
@@ -970,6 +996,7 @@ function num(v) {
 }
 
 function r2(n) { return Math.round(n * 100) / 100; }
+function r4_(n) { return Math.round(n * 10000) / 10000; } // preço unitário com 4 casas: 50 m por R$ 220,44 continua dando R$ 220,44
 function pad4_(n) { return String(num(n)).padStart(4, '0'); }
 function agora() { return Utilities.formatDate(new Date(), TZ, "yyyy-MM-dd'T'HH:mm:ss"); }
 function hoje() { return Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd'); }

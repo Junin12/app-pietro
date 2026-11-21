@@ -92,6 +92,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .g-servicos td:nth-child(6) { min-width: 175px; }
 .g-servicos td:nth-child(7) { min-width: 150px; }
 .g-servicos td:nth-child(8) { min-width: 140px; }
+.g-servicos tr:not(.item) td:nth-child(9) { min-width: 200px; }
+.g-servicos tr:not(.item) td:nth-child(10) { min-width: 90px; }
+.g-servicos tr.mat td:nth-child(5) { min-width: 130px; }
 .g-clientes td:nth-child(2) { min-width: 190px; }
 .g-clientes td:nth-child(3) { min-width: 150px; }
 .g-clientes td:nth-child(4) { min-width: 220px; }
@@ -123,6 +126,7 @@ tr.item td.seta { color: var(--azul); text-align: right; padding-right: 10px; }
 .b-fixa { display: block; margin: 2px auto 0; border: 1px solid var(--grade); background: var(--branco); border-radius: 6px; color: var(--azul); font-size: .68rem; font-weight: 600; padding: 2px 4px; white-space: nowrap; }
 tr.item .b-fixa { font-size: .9rem; padding: 4px 8px; color: var(--vermelho); }
 tr.total td { background: var(--amarelo-claro); }
+tr.total .rot-total .partes { font-weight: 400; color: var(--cinza); font-size: .78rem; }
 tr.total .rot-total { text-align: left; font-weight: 600; font-size: .85rem; padding: 0 10px; }
 tr.total td.num { text-align: right; padding: 8px; }
 tr.total td.num small { padding: 0; margin: 0; }
@@ -158,3 +162,23 @@ tr.saida td:nth-child(3) input { color: var(--vermelho); }
   background: var(--azul); color: var(--branco); font-size: .95rem; box-shadow: 0 6px 20px rgba(0, 0, 0, .2);
 }
 #aviso.erro { background: var(--vermelho); }
+
+/* menu "＋ mais" de cada serviço */
+#mais {
+  position: fixed; z-index: 40; min-width: 230px;
+  background: var(--branco); border: 1px solid var(--grade); border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(20, 37, 79, .22); overflow: hidden;
+}
+#mais button { display: block; width: 100%; text-align: left; padding: 13px 16px; background: none; border: 0; border-bottom: 1px solid var(--cab); font-size: 1rem; }
+
+/* materiais */
+tr.mat-cab td, tr.mat-cab th { background: var(--cab); font-size: .75rem; font-weight: 600; color: var(--cinza); padding: 4px 8px; }
+tr.mat-cab td.dir { text-align: right; }
+tr.mat td, tr.mat th { background: #FFFCEB; }
+
+/* janela do PDF */
+#dialogo { border: 0; border-radius: 16px; padding: 20px; width: min(92vw, 380px); color: var(--texto); box-shadow: 0 12px 40px rgba(0, 0, 0, .3); }
+#dialogo::backdrop { background: rgba(20, 37, 79, .45); }
+#dialogo h2 { margin: 0 0 4px; font-size: 1.15rem; color: var(--azul); }
+#dialogo .principal, #dialogo .botao { display: block; width: 100%; margin-top: 10px; text-align: center; text-decoration: none; }
+#dialogo .botao { padding: 12px; border: 1px solid var(--grade); border-radius: 12px; background: var(--branco); color: var(--texto); font-weight: 600; }

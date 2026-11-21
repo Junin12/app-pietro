@@ -1,44 +1,121 @@
 <!DOCTYPE html>
 <html>
-<head><meta charset="utf-8"></head>
+<head><meta charset="utf-8">
+<style>
+  /* Modelo "Grandes serviços": o mesmo formato do orçamento que o Pietro preenche à mão */
+  @page { size: A4; margin: 10mm; }
+  body { font-family: Arial, Helvetica, sans-serif; color: #14254F; font-size: 10pt; margin: 0; }
+  table { border-collapse: collapse; }
+  .faixa { width: 100%; background: #F5C518; }
+  .faixa td { padding: 12px 16px; vertical-align: middle; }
+  .assina { font-size: 9pt; font-weight: bold; letter-spacing: 1px; color: #17337A; }
+  .titulo { font-size: 24pt; font-weight: bold; color: #17337A; margin: 2px 0; }
+  .sub { font-size: 9pt; color: #17337A; }
+  .selo { background: #1E7FD8; color: #ffffff; font-weight: bold; font-size: 11pt; padding: 8px 14px; border-radius: 8px; text-align: center; }
+  .selo small { display: block; font-size: 9pt; font-weight: normal; margin-top: 2px; }
+  .ficha { width: 100%; margin-top: 10px; }
+  .ficha td { padding: 6px 4px; border-bottom: 1px solid #C9D3EE; vertical-align: bottom; }
+  .rot { font-size: 7.5pt; color: #5B6478; text-transform: uppercase; letter-spacing: .5px; white-space: nowrap; width: 1%; padding-right: 8px; }
+  .val { font-size: 11pt; font-weight: bold; }
+  h2 { font-size: 10pt; color: #1E7FD8; text-transform: uppercase; letter-spacing: .5px; margin: 16px 0 4px; border-bottom: 2px solid #1E7FD8; padding-bottom: 3px; }
+  .lista { width: 100%; }
+  .lista th { font-size: 8pt; color: #5B6478; text-align: left; padding: 4px 6px; border-bottom: 1px solid #C9D3EE; font-weight: normal; text-transform: uppercase; }
+  .lista tr { page-break-inside: avoid; }
+  .lista td { padding: 5px 6px; border-bottom: 1px solid #E6EAF5; font-size: 10pt; vertical-align: top; }
+  .lista .n { color: #5B6478; width: 18px; }
+  .dir { text-align: right; white-space: nowrap; }
+  .centro { text-align: center; white-space: nowrap; }
+  .loja td { background: #FFF4C2; font-weight: bold; border-bottom: 1px solid #F5C518; }
+  .subtot td { font-weight: bold; border-bottom: none; }
+  .totais { width: 100%; margin-top: 14px; }
+  .totais td { padding: 6px 10px; font-size: 11pt; }
+  .totais .lin td { border-bottom: 1px solid #C9D3EE; }
+  .totais .final td { background: #F5C518; font-size: 14pt; font-weight: bold; }
+  .cond { width: 100%; margin-top: 8px; }
+  .cond td { padding: 4px 6px; font-size: 9pt; vertical-align: top; }
+  .rodape { margin-top: 18px; width: 100%; background: #1E7FD8; color: #ffffff; }
+  .rodape td { padding: 12px 16px; font-size: 10pt; }
+  .amarelo { color: #F5C518; font-weight: bold; font-size: 12pt; }
+  .pequeno { font-size: 8.5pt; color: #5B6478; }
+</style>
+</head>
 <body>
-<?!= include('Cabecalho', d) ?>
 
-<h2>Serviços</h2>
-<table class="dados">
-  <tr><th>Serviço</th><th class="centro">Qtd</th><th class="dir">Valor unit.</th><th class="dir">Total</th></tr>
-  <? d.itens.forEach(function (i) { ?>
-  <tr><td><?= i.nome ?></td><td class="centro"><?= qtdBR(i.qtd) ?> <?= i.unidade ?></td><td class="dir"><?= moeda(i.preco) ?></td><td class="dir"><?= moeda(num(i.qtd) * num(i.preco)) ?></td></tr>
-  <? }); ?>
-  <? if (d.valores.desl) { ?><tr><td colspan="3">Deslocamento</td><td class="dir"><?= moeda(d.valores.desl) ?></td></tr><? } ?>
-  <? if (d.valores.desc) { ?><tr><td colspan="3">Desconto</td><td class="dir">− <?= moeda(d.valores.desc) ?></td></tr><? } ?>
-  <? if (d.valores.ajuste) { ?><tr><td colspan="3">Ajuste para o valor mínimo do atendimento</td><td class="dir"><?= moeda(d.valores.ajuste) ?></td></tr><? } ?>
-  <? if (d.valores.mat) { ?><tr><td colspan="3">Materiais<?= d.materialEstimado ? ' (estimativa, valor final conforme a nota fiscal)' : '' ?></td><td class="dir"><?= moeda(d.valores.mat) ?></td></tr><? } ?>
-  <tr class="total"><td colspan="3">TOTAL</td><td class="dir"><?= moeda(d.valores.total) ?></td></tr>
+<table class="faixa">
+  <tr>
+    <? if (d.logo) { ?><td width="80"><img src="<?!= d.logo ?>" width="70" height="70"></td><? } ?>
+    <td>
+      <div class="assina"><?= String(d.cfg.nome_profissional || 'Pietro Fasano').toUpperCase() ?></div>
+      <div class="titulo"><?= d.lista.length || d.itens.length > 3 ? 'Grandes serviços' : 'Orçamento' ?></div>
+      <div class="sub">Orçamento detalhado para planejar cada etapa.</div>
+    </td>
+    <td class="dir" width="170"><div class="selo">ORÇAMENTO<small>Nº <?= d.numero ?></small></div></td>
+  </tr>
 </table>
 
-<? if (d.lista.length) { ?>
-<h2>Lista de materiais<?= d.at.material_modo === 'Pietro' ? ' (comprados pelo Pietro)' : ' (por conta do cliente)' ?></h2>
-<table class="dados">
-  <tr><th>Material</th><th class="centro">Qtd</th><? if (d.at.material_modo !== 'Pietro') { ?><th class="dir">Preço estimado</th><th class="dir">Total estimado</th><? } ?></tr>
-  <? d.lista.forEach(function (m) { ?>
-  <tr><td><?= m.nome ?></td><td class="centro"><?= qtdBR(m.qtd) ?> <?= m.unidade ?></td><? if (d.at.material_modo !== 'Pietro') { ?><td class="dir"><?= moeda(m.preco) ?></td><td class="dir"><?= moeda(num(m.qtd) * num(m.preco)) ?></td><? } ?></tr>
+<table class="ficha">
+  <tr>
+    <td class="rot">Nº</td><td class="val"><?= pad4_(d.at.numero) ?></td>
+    <td class="rot">Data</td><td class="val"><?= dataBR(d.at.data_orcamento || hoje()) ?></td>
+    <td class="rot">Validade</td><td class="val"><?= dataBR(d.validade.data) ?></td>
+  </tr>
+  <tr>
+    <td class="rot">Cliente</td><td class="val" colspan="3"><?= nomeCli(d.cli) ?></td>
+    <td class="rot">Telefone</td><td class="val"><?= telBR(d.cli.telefone) ?></td>
+  </tr>
+  <tr><td class="rot">Endereço do serviço</td><td class="val" colspan="5"><?= d.enderecoServico ?></td></tr>
+</table>
+
+<h2>Etapas / itens</h2>
+<table class="lista">
+  <tr><th></th><th>Serviço</th><th class="centro" width="14%">Qtd</th><th class="dir" width="18%">Valor</th></tr>
+  <? d.itens.forEach(function (i, k) { ?>
+  <tr><td class="n"><?= k + 1 ?></td><td><?= i.nome ?></td>
+    <td class="centro"><?= num(i.qtd) !== 1 ? qtdBR(i.qtd) + ' ' + (i.unidade || '') : '' ?></td>
+    <td class="dir"><?= num(i.preco) ? moeda(num(i.qtd) * num(i.preco)) : '' ?></td></tr>
   <? }); ?>
-  <? if (d.at.material_modo !== 'Pietro') { ?><tr class="total"><td colspan="3">Estimativa (preços médios em <?= d.cfg.cidade || 'Uberaba' ?>)</td><td class="dir"><?= moeda(d.totalLista) ?></td></tr><? } ?>
+  <? if (d.valores.desl) { ?><tr><td></td><td>Deslocamento</td><td></td><td class="dir"><?= moeda(d.valores.desl) ?></td></tr><? } ?>
+  <? if (d.valores.desc) { ?><tr><td></td><td>Desconto</td><td></td><td class="dir">− <?= moeda(d.valores.desc) ?></td></tr><? } ?>
+  <? if (d.valores.ajuste) { ?><tr><td></td><td>Ajuste para o valor mínimo do atendimento</td><td></td><td class="dir"><?= moeda(d.valores.ajuste) ?></td></tr><? } ?>
+</table>
+
+<? if (d.lista.length) { var pietro = d.at.material_modo === 'Pietro'; ?>
+<h2>Materiais<?= pietro ? '' : ' (por conta do cliente – preços estimados)' ?></h2>
+<table class="lista">
+  <tr><th>Material</th><th class="centro" width="14%">Qtd</th><th class="dir" width="18%">Valor</th></tr>
+  <? d.lojas.forEach(function (g) { ?>
+    <? if (g.loja) { ?><tr class="loja"><td colspan="3"><?= g.loja ?></td></tr><? } ?>
+    <? g.itens.forEach(function (m) { ?>
+    <tr><td><?= m.nome ?></td><td class="centro"><?= qtdBR(m.qtd) ?> <?= m.unidade && m.unidade !== 'un' ? m.unidade : '' ?></td>
+      <td class="dir"><?= num(m.preco) ? moeda(num(m.qtd) * num(m.preco)) : '' ?></td></tr>
+    <? }); ?>
+  <? }); ?>
+  <tr class="subtot"><td colspan="2">Total dos materiais<?= pietro && d.materialEstimado && Math.abs(d.valores.mat - d.totalLista) > 0.01 ? ' (com taxa de compra)' : '' ?></td>
+    <td class="dir"><?= moeda(pietro ? d.valores.mat || d.totalLista : d.totalLista) ?></td></tr>
 </table>
 <? } ?>
 
-<h2>Condições</h2>
-<table class="dados">
-  <tr><td width="30%"><b>Material</b></td><td><?= d.at.material_modo === 'Pietro' ? 'Comprado pelo Pietro e repassado com a nota fiscal.' : (d.lista.length ? 'Por conta do cliente (lista acima).' : 'Por conta do cliente.') ?></td></tr>
-  <tr><td><b>Validade</b></td><td><?= d.cfg.validade_orcamento || 15 ?> dias a partir de <?= dataBR(d.at.data_orcamento) ?></td></tr>
-  <tr><td><b>Garantia</b></td><td><?= d.cfg.garantia_dias || 90 ?> dias sobre a mão de obra</td></tr>
+<table class="totais">
+  <? if (d.valores.mat) { ?>
+  <tr class="lin"><td>Materiais</td><td class="dir"><?= moeda(d.valores.mat) ?></td></tr>
+  <tr class="lin"><td>Mão de obra</td><td class="dir"><?= moeda(d.valores.total - d.valores.mat) ?></td></tr>
+  <? } ?>
+  <tr class="final"><td>TOTAL</td><td class="dir"><?= moeda(d.valores.total) ?></td></tr>
+</table>
+
+<table class="cond">
+  <tr><td width="22%"><b>Garantia</b></td><td><?= d.cfg.garantia_dias || 90 ?> dias sobre a mão de obra</td></tr>
   <tr><td><b>Pagamento</b></td><td>Pix, dinheiro ou cartão<? if (d.cfg.chave_pix) { ?> · Chave Pix: <?= d.cfg.chave_pix ?><? } ?></td></tr>
+  <tr><td><b>Validade</b></td><td><?= d.validade.dias ?> dias (até <?= dataBR(d.validade.data) ?>)</td></tr>
+  <? if (d.lista.length && d.at.material_modo === 'Pietro' && d.materialEstimado) { ?><tr><td><b>Materiais</b></td><td>Comprados pelo Pietro; o valor final segue as notas fiscais.</td></tr><? } ?>
   <? if (d.at.observacao) { ?><tr><td><b>Observação</b></td><td><?!= quebras(d.at.observacao) ?></td></tr><? } ?>
 </table>
 
-<p>✔ Preço fechado, combinado antes de começar &nbsp; ✔ Local limpo e organizado no final</p>
-
-<?!= include('Rodape', d) ?>
+<table class="rodape">
+  <tr>
+    <td><span class="amarelo">Chamou, o Pietro resolve.</span></td>
+    <td class="dir"><span class="amarelo"><?= telBR(d.cfg.telefone) ?></span><br><span style="font-size:8.5pt">WhatsApp e ligações</span></td>
+  </tr>
+</table>
 </body>
 </html>
